@@ -2,11 +2,21 @@
 <html lang="it">
 <head>
   <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover"/>
   <title>CialtronApp ⚽</title>
-  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
-  <script src="https://unpkg.com/@babel/standalone@7.23.5/babel.min.js"></script>
+  <meta name="theme-color" content="#090909"/>
+  <meta name="description" content="Classifica, partite e selezione squadre del calcetto."/>
+  <!-- installabile sulla home dell'iPhone -->
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <meta name="apple-mobile-web-app-title" content="Cialtron"/>
+  <meta name="mobile-web-app-capable" content="yes"/>
+  <link rel="apple-touch-icon" href="icon-180.png"/>
+  <link rel="icon" href="icon-192.png"/>
+  <link rel="manifest" href="manifest.json"/>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@400;600;700;800&display=swap" rel="stylesheet"/>
   <style>
@@ -18,6 +28,9 @@
     input[type=number]::-webkit-inner-spin-button{opacity:.3}
     input::placeholder{color:#555}
     select option{background:#1a1a1a;color:#f2f2f2}
+    /* in standalone il contenuto passa sotto la status bar */
+    header{padding-top:calc(10px + env(safe-area-inset-top,0px))!important}
+    main{padding-bottom:calc(100px + env(safe-area-inset-bottom,0px))!important}
     #splash{position:fixed;inset:0;background:#090909;display:flex;flex-direction:column;
       align-items:center;justify-content:center;color:#555;z-index:9999;transition:opacity .4s}
     #splash .ball{font-size:48px;margin-bottom:16px;animation:sp 2s linear infinite}
@@ -35,24 +48,28 @@ const {useState,useEffect,useRef,useMemo,useCallback} = React;
 ═══════════════════════════════════════════════════════ */
 const C={accent:"#B8FF00",bg:"#090909",card:"#111",card2:"#1A1A1A",card3:"#222",
          text:"#F2F2F2",muted:"#666",border:"#1F1F1F",red:"#FF4444",green:"#22C55E"};
-
 /* ═══════════════════════════════════════════════════════
    FIREBASE REST HELPERS
 ═══════════════════════════════════════════════════════ */
-const fbGet = async (dbUrl, path="") => {
-  try{const r=await fetch(`${dbUrl}${path?"/"+path:""}.json`); return r.ok?await r.json():null;}
-  catch{return null;}
+/* fbFetch distingue "il nodo è vuoto" da "la richiesta è fallita": senza
+   questa distinzione il setup rischia di scrivere sopra un gruppo esistente. */
+const fbFetch = async (dbUrl, path="") => {
+  try{
+    const r=await fetch(`${dbUrl}${path?"/"+path:""}.json`,{cache:"no-store"});
+    return r.ok?{ok:true,data:await r.json()}:{ok:false,data:null};
+  }catch{return{ok:false,data:null};}
 };
+const fbGet = async (dbUrl, path="") => (await fbFetch(dbUrl,path)).data;
 const fbPut = async (dbUrl, path, data) => {
-  try{await fetch(`${dbUrl}/${path}.json`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});return true;}
+  try{const r=await fetch(`${dbUrl}/${path}.json`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});return r.ok;}
   catch{return false;}
 };
 const fbPatch = async (dbUrl, path, data) => {
-  try{await fetch(`${dbUrl}/${path}.json`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});return true;}
+  try{const r=await fetch(`${dbUrl}/${path}.json`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});return r.ok;}
   catch{return false;}
 };
 const fbDel = async (dbUrl, path) => {
-  try{await fetch(`${dbUrl}/${path}.json`,{method:"DELETE"});return true;}
+  try{const r=await fetch(`${dbUrl}/${path}.json`,{method:"DELETE"});return r.ok;}
   catch{return false;}
 };
 
@@ -60,7 +77,7 @@ const fbDel = async (dbUrl, path) => {
    UTILITIES
 ═══════════════════════════════════════════════════════ */
 const uid = () => Math.random().toString(36).slice(2,11);
-
+const norm = s => String(s??"").trim().toLowerCase();
 function resizePhoto(file, maxPx=160){
   return new Promise(res=>{
     const img=new Image(), url=URL.createObjectURL(file);
@@ -75,6 +92,12 @@ function resizePhoto(file, maxPx=160){
   });
 }
 
+/* Le statistiche non sono memorizzate: si ricalcolano dalle partite.
+   `base` è la parte manuale — storico importato da Excel o correzione con ✏️ —
+   e si SOMMA al calcolo, così le partite registrate dopo continuano a contare. */
+const FIELDS=["presences","wins","goals","mvps"];
+const ZERO={presences:0,wins:0,goals:0,mvps:0};
+
 function computeStats(player, matches){
   let aP=0,aW=0,aG=0,aM=0;
   for(const m of(matches||[])){
@@ -82,18 +105,63 @@ function computeStats(player, matches){
     if(iW||iB){aP++;if((m.winner==="white"&&iW)||(m.winner==="black"&&iB))aW++;}
     if(m.mvp===player.id)aM++; aG+=m.goals?.[player.id]||0;
   }
-  const ov=player.overrides||{}, p=ov.presences??aP, w=ov.wins??aW, g=ov.goals??aG, mv=ov.mvps??aM;
-  const pts=w*3; return{presences:p,wins:w,goals:g,mvps:mv,points:pts,avg:p>0?pts/p:0};
+  const auto={presences:aP,wins:aW,goals:aG,mvps:aM};
+  const b=player.base||{}, base={}, tot={};
+  for(const f of FIELDS){base[f]=+b[f]||0; tot[f]=Math.max(0,auto[f]+base[f]);}
+  const points=tot.wins*3;
+  return{...tot,points,avg:tot.presences>0?points/tot.presences:0,auto,base};
 }
 
-function setPath(obj, pathStr, val){
-  const parts=pathStr.split("/").filter(Boolean);
-  if(!parts.length)return val;
-  let cur=typeof obj==="object"&&obj?{...obj}:{};
-  let ref=cur;
-  for(let i=0;i<parts.length-1;i++){ref[parts[i]]=ref[parts[i]]?{...ref[parts[i]]}:{};ref=ref[parts[i]];}
-  ref[parts[parts.length-1]]=val;
-  return cur;
+/* dai totali mostrati a schermo alla base da salvare (null = tutto automatico) */
+function baseFromTotals(totals, auto){
+  const base={}; let manual=false;
+  for(const f of FIELDS){
+    const d=Math.max(0,Math.round(+totals[f]||0))-auto[f];
+    if(d!==0){base[f]=d; manual=true;}
+  }
+  return manual?base:null;
+}
+
+/* ─── foto: fuori dal nodo players, con cache locale ───
+   Nel database stanno in photos/<id>; players porta solo photoRev, così il
+   polling ogni 3 s non riscarica i base64 di tutta la rosa. */
+const PH_DATA=id=>"cia-photo-"+id, PH_REV=id=>"cia-photorev-"+id;
+
+function readPhotoCache(){
+  const m={};
+  try{
+    for(let i=0;i<localStorage.length;i++){
+      const k=localStorage.key(i);
+      if(k&&k.startsWith("cia-photo-")) m[k.slice(10)]=localStorage.getItem(k);
+    }
+  }catch(e){}
+  return m;
+}
+function writePhotoCache(id,b64,rev){
+  try{
+    if(b64) localStorage.setItem(PH_DATA(id),b64); else localStorage.removeItem(PH_DATA(id));
+    localStorage.setItem(PH_REV(id),String(rev||""));
+  }catch(e){}
+}
+function dropPhotoCache(id){
+  try{localStorage.removeItem(PH_DATA(id));localStorage.removeItem(PH_REV(id));}catch(e){}
+}
+
+/* ─── import Excel: intestazioni accettate per ogni colonna ─── */
+const COLS={
+  name:["nome","giocatore","player","cognome"],
+  presences:["presenze","presenza","partite","p"],
+  wins:["vittorie","vinte","vittoria","win","wins","v"],
+  goals:["gol","gols","goal","goals","reti"],
+  mvps:["mvp","mvps","migliore","best"],
+};
+function readRow(row){
+  const out={};
+  for(const k of Object.keys(row)){
+    const kk=norm(k);
+    for(const f of Object.keys(COLS)) if(COLS[f].includes(kk)) out[f]=row[k];
+  }
+  return out;
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -153,24 +221,40 @@ function Input({label,value,onChange,type="text",placeholder,autoFocus}){return(
    SETUP SCREEN (prima visita — inserisci URL Firebase)
 ═══════════════════════════════════════════════════════ */
 function SetupScreen({onComplete}){
-  const [url,setUrl]=useState(""), [pin,setPin]=useState(""), [busy,setBusy]=useState(false), [err,setErr]=useState("");
+  const [url,setUrl]=useState(""), [pin,setPin]=useState("");
+  const [busy,setBusy]=useState(false), [err,setErr]=useState("");
+  const [found,setFound]=useState(null); // null = non verificato · false = vuoto · oggetto = gruppo esistente
 
-  const go = async () => {
-    setBusy(true); setErr("");
-    const clean=url.trim().replace(/\/$/,"");
+  const enter=u=>{localStorage.setItem("cia-db-url",u);onComplete(u);};
+  const summary=d=>({players:(d?.players||[]).length,matches:(d?.matches||[]).length});
+  const hasData=d=>!!(d&&(d.adminPin!=null||d.players||d.matches));
+
+  const probe=async()=>{
+    setBusy(true);setErr("");
+    const clean=url.trim().replace(/\/+$/,"");
     if(!clean.includes("firebaseio.com")){setErr("L'URL deve contenere 'firebaseio.com'");setBusy(false);return;}
-    const test=await fbGet(clean,"adminPin");
-    if(test===null){
-      // Write initial data
-      const ok=await fbPut(clean,"adminPin",pin||"1234");
-      if(!ok){setErr("Impossibile connettersi. Controlla URL e regole Firebase.");setBusy(false);return;}
-      await fbPut(clean,"players",[]);
-      await fbPut(clean,"matches",[]);
-      await fbPut(clean,"teamSelection",{phase:"idle",assign:{},captainSide:null});
-    }
-    localStorage.setItem("cia-db-url",clean);
-    onComplete(clean);
+    const r=await fbFetch(clean);
+    if(!r.ok){setErr("Impossibile leggere il database. Controlla l'URL e le regole di lettura.");setBusy(false);return;}
+    setUrl(clean);
+    setFound(hasData(r.data)?summary(r.data):false);
     setBusy(false);
+  };
+
+  const create=async()=>{
+    if(pin.trim().length<4){setErr("Scegli un PIN di almeno 4 cifre");return;}
+    setBusy(true);setErr("");
+    // ricontrollo prima di scrivere: mai sovrascrivere un gruppo già esistente
+    const r=await fbFetch(url);
+    if(!r.ok){setErr("Connessione persa, riprova.");setBusy(false);return;}
+    if(hasData(r.data)){
+      setErr("Su questo database ci sono già dei dati: entra invece di crearne uno nuovo.");
+      setFound(summary(r.data));setBusy(false);return;
+    }
+    if(!await fbPut(url,"adminPin",pin.trim())){
+      setErr("Scrittura non riuscita. Controlla le regole di scrittura del database.");setBusy(false);return;
+    }
+    await fbPut(url,"teamSelection",{phase:"idle",assign:{},captainSide:null});
+    setBusy(false); enter(url);
   };
 
   return(
@@ -183,28 +267,40 @@ function SetupScreen({onComplete}){
         </div>
 
         <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:16,padding:20,marginBottom:16}}>
-          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,letterSpacing:2,color:C.accent,marginBottom:14}}>STEP 1 — CREA IL DATABASE</div>
+          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,letterSpacing:2,color:C.accent,marginBottom:14}}>STEP 1 — IL DATABASE</div>
           <div style={{fontSize:13,color:C.muted,lineHeight:1.8,marginBottom:12}}>
+            Se il gruppo esiste già, incolla l'URL che ti hanno passato. Altrimenti:<br/>
             1. Vai su <strong style={{color:C.text}}>console.firebase.google.com</strong><br/>
             2. Crea nuovo progetto (nome qualsiasi)<br/>
             3. Nel menu sinistro: <strong style={{color:C.text}}>Realtime Database → Crea database</strong><br/>
             4. Scegli la regione più vicina → <strong style={{color:C.text}}>Avvia in modalità test</strong><br/>
             5. Copia l'URL che appare (es: <code style={{color:C.accent}}>https://mio-progetto-default-rtdb.firebaseio.com</code>)
           </div>
-          <Input label="URL DATABASE FIREBASE" value={url} onChange={setUrl} placeholder="https://xxx-default-rtdb.firebaseio.com"/>
+          <Input label="URL DATABASE FIREBASE" value={url} onChange={v=>{setUrl(v);setFound(null);setErr("");}} placeholder="https://xxx-default-rtdb.firebaseio.com"/>
+          {found===null&&<Btn onClick={probe} disabled={!url||busy} full style={{padding:"12px 0",borderRadius:10}}>{busy?"Verifico…":"Verifica database →"}</Btn>}
         </div>
 
-        <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:16,padding:20,marginBottom:16}}>
-          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,letterSpacing:2,color:C.accent,marginBottom:14}}>STEP 2 — PIN ADMIN</div>
-          <div style={{fontSize:13,color:C.muted,marginBottom:12}}>Solo tu conoscerai questo PIN per modificare i dati. Gli altri potranno solo visualizzare e fare la selezione squadre.</div>
-          <Input label="PIN ADMIN (4 cifre)" type="password" value={pin} onChange={setPin} placeholder="es. 1234"/>
-        </div>
+        {found&&(
+          <div style={{background:C.card,border:`1px solid ${C.green}35`,borderRadius:16,padding:20,marginBottom:16}}>
+            <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,letterSpacing:2,color:C.green,marginBottom:10}}>GRUPPO TROVATO</div>
+            <div style={{fontSize:13,color:C.muted,marginBottom:14}}>
+              <strong style={{color:C.text}}>{found.players}</strong> giocatori · <strong style={{color:C.text}}>{found.matches}</strong> partite.
+              Entri come ospite: vedi tutto e partecipi alla selezione squadre. Per modificare i dati sblocca l'admin col 🔒 in alto a destra.
+            </div>
+            <Btn onClick={()=>enter(url)} full style={{padding:"14px 0",fontSize:16,borderRadius:12}}>Entra nel gruppo →</Btn>
+          </div>
+        )}
+
+        {found===false&&(
+          <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:16,padding:20,marginBottom:16}}>
+            <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,letterSpacing:2,color:C.accent,marginBottom:14}}>STEP 2 — PIN ADMIN</div>
+            <div style={{fontSize:13,color:C.muted,marginBottom:12}}>Database vuoto: stai creando un gruppo nuovo. Solo tu conoscerai questo PIN per modificare i dati; gli altri potranno visualizzare e fare la selezione squadre.</div>
+            <Input label="PIN ADMIN (min. 4 cifre)" type="password" value={pin} onChange={setPin} placeholder="es. 1234"/>
+            <Btn onClick={create} disabled={!pin||busy} full style={{padding:"14px 0",fontSize:16,borderRadius:12}}>{busy?"Creo il gruppo…":"Crea il gruppo →"}</Btn>
+          </div>
+        )}
 
         {err&&<div style={{background:C.red+"15",border:`1px solid ${C.red}40`,borderRadius:10,padding:12,marginBottom:12,fontSize:13,color:C.red}}>{err}</div>}
-
-        <Btn onClick={go} disabled={!url||busy} full style={{padding:"14px 0",fontSize:16,borderRadius:12}}>
-          {busy?"Connessione in corso…":"Connetti e avvia →"}
-        </Btn>
 
         <div style={{marginTop:12,fontSize:11,color:C.muted,textAlign:"center"}}>
           Il database è gratuito. Le regole "test mode" durano 30 giorni poi vanno rinnovate dalla console Firebase → Regole → <code style={{color:C.accent}}>{`{".read":true,".write":true}`}</code>
@@ -241,54 +337,124 @@ function AdminModal({dbUrl,onLogin,onClose}){
 /* ═══════════════════════════════════════════════════════
    CLASSIFICA
 ═══════════════════════════════════════════════════════ */
-function StandingsSection({standings,isAdmin,dbUrl,reload}){
-  const [editId,setEditId]=useState(null), [ev,setEv]=useState({});
+/* Sotto i 460px le colonne fisse non lascerebbero spazio al nome:
+   sul telefono le statistiche vanno su una riga sotto il nome. */
+function useNarrow(bp=460){
+  const [n,setN]=useState(()=>typeof window!=="undefined"&&window.innerWidth<bp);
+  useEffect(()=>{
+    const h=()=>setN(window.innerWidth<bp);
+    window.addEventListener("resize",h); window.addEventListener("orientationchange",h);
+    return()=>{window.removeEventListener("resize",h);window.removeEventListener("orientationchange",h);};
+  },[bp]);
+  return n;
+}
+
+const SHORT={presences:"P",wins:"V",goals:"GOL",mvps:"MVP"};
+
+function StandingsSection({standings,isAdmin,updatePlayers}){
+  const [editId,setEditId]=useState(null), [ev,setEv]=useState({}), [busy,setBusy]=useState(false);
+  const narrow=useNarrow();
   const startEdit=p=>{setEditId(p.id);setEv({presences:p.stats.presences,wins:p.stats.wins,goals:p.stats.goals,mvps:p.stats.mvps});};
-  const saveEdit=async id=>{
-    const players=standings.map(p=>p.id===id?{...p,overrides:{presences:+ev.presences||0,wins:+ev.wins||0,goals:+ev.goals||0,mvps:+ev.mvps||0}}:p);
-    const slim=players.map(({stats,...rest})=>rest);
-    await fbPut(dbUrl,"players",slim); setEditId(null); reload();
+  const toAuto=p=>setEv({presences:p.stats.auto.presences,wins:p.stats.auto.wins,goals:p.stats.auto.goals,mvps:p.stats.auto.mvps});
+
+  /* salva solo lo scarto rispetto al calcolo: i campi lasciati com'erano
+     continuano ad aggiornarsi da soli con le partite successive */
+  const saveEdit=async row=>{
+    setBusy(true);
+    const base=baseFromTotals(ev,row.stats.auto);
+    await updatePlayers(list=>list.map(p=>p.id===row.id?{...p,base,overrides:null}:p));
+    setBusy(false);setEditId(null);
   };
+
   const MEDALS=["🥇","🥈","🥉"];
+  const cols="30px 1fr 38px 38px 38px 38px 54px"+(isAdmin?" 32px":"");
+  const manual=standings.some(p=>FIELDS.some(f=>p.stats.base[f]!==0));
+  const mark=f=><span title="valore corretto a mano" style={{fontSize:9,color:C.accent,verticalAlign:"super",marginLeft:1}}>✎</span>;
+  const numInput=f=><input key={f} type="number" min="0" value={ev[f]} onChange={e=>setEv(v=>({...v,[f]:e.target.value}))}
+    style={{width:"100%",background:C.card3,border:`1px solid ${C.accent}`,color:C.text,borderRadius:6,padding:"6px 3px",fontSize:13,textAlign:"center",fontFamily:"'DM Sans',sans-serif"}}/>;
+
   return(
     <div>
       <Banner title="CLASSIFICA" sub="3 punti per vittoria · media = punti ÷ presenze"/>
       {standings.length===0?<Empty emoji="🏆" text="Nessun giocatore. Aggiungili dalla sezione Rosa (admin)!"/>:(
         <>
-          <div style={{display:"grid",gridTemplateColumns:"30px 1fr 38px 38px 38px 38px 54px"+(isAdmin?" 32px":""),gap:4,padding:"0 10px 8px"}}>
-            {["#","Giocatore","P","V","GOL","MVP","MEDIA",...(isAdmin?[""]:[])].map((h,i)=>(
-              <div key={i} style={{fontSize:9,color:C.muted,fontWeight:700,letterSpacing:.8,textAlign:i===1?"left":"center"}}>{h}</div>
-            ))}
-          </div>
+          {!narrow&&(
+            <div style={{display:"grid",gridTemplateColumns:cols,gap:4,padding:"0 10px 8px"}}>
+              {["#","Giocatore","P","V","GOL","MVP","MEDIA",...(isAdmin?[""]:[])].map((h,i)=>(
+                <div key={i} style={{fontSize:9,color:C.muted,fontWeight:700,letterSpacing:.8,textAlign:i===1?"left":"center"}}>{h}</div>
+              ))}
+            </div>
+          )}
           {standings.map((p,i)=>{
             const isFirst=i===0, isLast=i===standings.length-1&&standings.length>1, isEd=editId===p.id, s=p.stats;
+            const frame={background:isFirst?`${C.accent}0D`:isLast?`${C.red}0A`:C.card,border:`1px solid ${isFirst?C.accent+"35":isLast?C.red+"30":C.border}`,borderRadius:12,marginBottom:6,overflow:"hidden"};
+            const pos=<div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,color:i<3?C.accent:C.muted,textAlign:"center",width:narrow?22:undefined,flexShrink:0}}>{MEDALS[i]||i+1}</div>;
+            const avg=<div style={{textAlign:"center",flexShrink:0}}>
+                <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,color:isFirst?C.accent:C.text,lineHeight:1}}>{s.avg.toFixed(2)}</div>
+                <div style={{fontSize:9,color:C.muted}}>media</div>
+              </div>;
+            const editBtn=isAdmin&&(isEd
+              ?<Btn onClick={()=>saveEdit(p)} disabled={busy} small style={{padding:"5px 8px"}}>✓</Btn>
+              :<button onClick={()=>startEdit(p)} style={{background:"none",border:"none",cursor:"pointer",fontSize:14,color:C.muted,padding:4,flexShrink:0}}>✏️</button>);
+            const tags=<div style={{display:"flex",gap:4,marginTop:2}}>{isFirst&&<Tag>CAP</Tag>}{isLast&&<Tag color={C.red}>PICK</Tag>}</div>;
+            const name=<div style={{fontWeight:700,fontSize:14,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{p.name}</div>;
+
             return(
-              <div key={p.id} style={{background:isFirst?`${C.accent}0D`:isLast?`${C.red}0A`:C.card,border:`1px solid ${isFirst?C.accent+"35":isLast?C.red+"30":C.border}`,borderRadius:12,marginBottom:6,overflow:"hidden"}}>
-                <div style={{display:"grid",gridTemplateColumns:"30px 1fr 38px 38px 38px 38px 54px"+(isAdmin?" 32px":""),gap:4,padding:"11px 10px",alignItems:"center"}}>
-                  <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,color:i<3?C.accent:C.muted,textAlign:"center"}}>{MEDALS[i]||i+1}</div>
-                  <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}>
+              <div key={p.id} style={frame}>
+                {narrow?(
+                  /* ─── telefono: nome in alto, statistiche sotto ─── */
+                  <div style={{display:"flex",alignItems:"center",gap:9,padding:"11px 10px"}}>
+                    {pos}
                     <Avatar player={p} size={34}/>
-                    <div style={{minWidth:0}}>
-                      <div style={{fontWeight:700,fontSize:14,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{p.name}</div>
-                      <div style={{display:"flex",gap:4,marginTop:2}}>{isFirst&&<Tag>CAP</Tag>}{isLast&&<Tag color={C.red}>PICK</Tag>}</div>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{display:"flex",alignItems:"center",gap:6,minWidth:0}}>
+                        <div style={{minWidth:0,flex:1}}>{name}</div>
+                        {(isFirst||isLast)&&tags}
+                      </div>
+                      <div style={{fontSize:11,color:C.muted,marginTop:3,display:"flex",gap:9}}>
+                        {FIELDS.map(f=><span key={f}>{SHORT[f]} <strong style={{color:C.text}}>{s[f]}</strong>{s.base[f]!==0&&mark(f)}</span>)}
+                      </div>
+                    </div>
+                    {avg}{editBtn}
+                  </div>
+                ):(
+                  /* ─── schermo largo: tabella ─── */
+                  <div style={{display:"grid",gridTemplateColumns:cols,gap:4,padding:"11px 10px",alignItems:"center"}}>
+                    {pos}
+                    <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}>
+                      <Avatar player={p} size={34}/>
+                      <div style={{minWidth:0}}>{name}{tags}</div>
+                    </div>
+                    {isEd?FIELDS.map(f=>numInput(f)):FIELDS.map(f=>(
+                      <div key={f} style={{textAlign:"center",fontWeight:700,fontSize:14,color:C.text}}>{s[f]}{s.base[f]!==0&&mark(f)}</div>
+                    ))}
+                    {avg}{editBtn}
+                  </div>
+                )}
+
+                {isEd&&(
+                  <div style={{borderTop:`1px solid ${C.border}`,padding:"10px"}}>
+                    {narrow&&(
+                      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:6,marginBottom:10}}>
+                        {FIELDS.map(f=>(
+                          <div key={f}>
+                            <div style={{fontSize:9,color:C.muted,fontWeight:700,letterSpacing:.8,textAlign:"center",marginBottom:4}}>{SHORT[f]}</div>
+                            {numInput(f)}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                      <div style={{fontSize:11,color:C.muted,flex:1,minWidth:150}}>Dalle partite: {s.auto.presences}·{s.auto.wins}·{s.auto.goals}·{s.auto.mvps}. Quello che cambi resta come correzione fissa, il resto continua ad aggiornarsi.</div>
+                      <Btn onClick={()=>toAuto(p)} variant="ghost" small>↺ Ricalcola</Btn>
+                      <Btn onClick={()=>setEditId(null)} variant="ghost" small>Annulla</Btn>
                     </div>
                   </div>
-                  {isEd
-                    ?["presences","wins","goals","mvps"].map(f=><input key={f} type="number" min="0" value={ev[f]} onChange={e=>setEv(v=>({...v,[f]:e.target.value}))} style={{width:"100%",background:C.card3,border:`1px solid ${C.accent}`,color:C.text,borderRadius:4,padding:"5px 3px",fontSize:12,textAlign:"center",fontFamily:"'DM Sans',sans-serif"}}/>)
-                    :[s.presences,s.wins,s.goals,s.mvps].map((v,j)=><div key={j} style={{textAlign:"center",fontWeight:700,fontSize:14,color:C.text}}>{v}</div>)
-                  }
-                  <div style={{textAlign:"center"}}>
-                    <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,color:isFirst?C.accent:C.text,lineHeight:1}}>{s.avg.toFixed(2)}</div>
-                    <div style={{fontSize:9,color:C.muted}}>media</div>
-                  </div>
-                  {isAdmin&&(isEd
-                    ?<Btn onClick={()=>saveEdit(p.id)} small style={{padding:"5px 8px"}}>✓</Btn>
-                    :<button onClick={()=>startEdit(p)} style={{background:"none",border:"none",cursor:"pointer",fontSize:14,color:C.muted,padding:4}}>✏️</button>
-                  )}
-                </div>
+                )}
               </div>
             );
           })}
+          {manual&&<div style={{fontSize:11,color:C.muted,textAlign:"center",marginTop:12}}>✎ = valore con una correzione manuale sopra il calcolo delle partite</div>}
         </>
       )}
     </div>
@@ -296,11 +462,31 @@ function StandingsSection({standings,isAdmin,dbUrl,reload}){
 }
 
 /* ═══════════════════════════════════════════════════════
-   PARTITE
+   PARTITE — flusso in 3 step
 ═══════════════════════════════════════════════════════ */
-function MatchSection({players,matches,isAdmin,dbUrl,reload}){
+const STEPS=[{k:"teams",n:1,t:"SQUADRE",s:"Chi ha giocato e con chi"},
+             {k:"winner",n:2,t:"VINCITORE",s:"Chi ha vinto la partita"},
+             {k:"extra",n:3,t:"MVP E GOL",s:"Il migliore e i marcatori"}];
+
+function StepBar({phase}){
+  const cur=STEPS.find(s=>s.k===phase)||STEPS[0];
+  return(
+    <div style={{marginBottom:18}}>
+      <div style={{display:"flex",gap:6,marginBottom:8}}>
+        {STEPS.map(s=><div key={s.k} style={{flex:1,height:4,borderRadius:2,background:s.n<=cur.n?C.accent:C.card3,transition:"background .2s"}}/>)}
+      </div>
+      <div style={{display:"flex",alignItems:"baseline",gap:8}}>
+        <span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:16,letterSpacing:2,color:C.accent}}>STEP {cur.n}/3 — {cur.t}</span>
+        <span style={{fontSize:11,color:C.muted}}>{cur.s}</span>
+      </div>
+    </div>
+  );
+}
+
+function MatchSection({players,matches,isAdmin,saveMatches}){
   const [phase,setPhase]=useState("list"), [white,setWhite]=useState([]), [black,setBlack]=useState([]);
   const [winner,setWinner]=useState(""), [mvp,setMvp]=useState(""), [goals,setGoals]=useState({});
+  const [busy,setBusy]=useState(false), [delId,setDelId]=useState(null);
   const getP=id=>players.find(p=>p.id===id);
   const assign=(id,team)=>{
     if(team==="white"){setWhite(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);setBlack(p=>p.filter(x=>x!==id));}
@@ -308,23 +494,35 @@ function MatchSection({players,matches,isAdmin,dbUrl,reload}){
   };
   const reset=()=>{setPhase("list");setWhite([]);setBlack([]);setWinner("");setMvp("");setGoals({});};
   const submit=async()=>{
-    if(!winner)return;
+    if(!winner||busy)return;
+    setBusy(true);
     const g={};Object.entries(goals).forEach(([id,v])=>{if(+v>0)g[id]=+v;});
     const newMatch={id:uid(),date:new Date().toISOString(),white,black,winner,mvp:mvp||null,goals:g};
-    await fbPut(dbUrl,"matches",[...(matches||[]),newMatch]);
-    reset(); reload();
+    await saveMatches([...(matches||[]),newMatch]);
+    setBusy(false);reset();
   };
   const deleteMatch=async id=>{
-    await fbPut(dbUrl,"matches",(matches||[]).filter(m=>m.id!==id)); reload();
+    await saveMatches((matches||[]).filter(m=>m.id!==id));
+    setDelId(null);
   };
   const all=[...white,...black];
+  const back=to=><button onClick={()=>setPhase(to)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",marginBottom:14,fontSize:13,fontFamily:"'DM Sans',sans-serif"}}>← Indietro</button>;
+
+  const TeamCard=({t,ids,onClick,selected})=>(
+    <div onClick={onClick} style={{flex:1,background:selected?C.accent+"12":C.card2,border:`2px solid ${selected?C.accent:C.border}`,borderRadius:12,padding:14,cursor:onClick?"pointer":"default",transition:"all .15s"}}>
+      <div style={{fontWeight:800,fontSize:14,color:selected?C.accent:C.text,marginBottom:10}}>{t==="white"?"⬜ BIANCHI":"⬛ NERI"} {selected?"🏆":""}</div>
+      {ids.length===0&&<div style={{fontSize:12,color:C.muted}}>Nessuno</div>}
+      {ids.map(id=>{const p=getP(id);return p?<div key={id} style={{display:"flex",alignItems:"center",gap:7,marginBottom:6}}><Avatar player={p} size={24}/><span style={{fontSize:13,color:C.text}}>{p.name}</span></div>:null;})}
+    </div>
+  );
 
   return(
     <div>
       <Banner title="PARTITE" sub={isAdmin?"Registra i match per aggiornare la classifica":"Storico partite"}/>
+
       {phase==="list"&&(
         <>
-          {isAdmin&&<Btn onClick={()=>setPhase("setup")} full style={{padding:"13px 0",fontSize:15,borderRadius:10,marginBottom:18}}>＋ Nuova partita</Btn>}
+          {isAdmin&&<Btn onClick={()=>setPhase("teams")} disabled={(players||[]).length<2} full style={{padding:"13px 0",fontSize:15,borderRadius:10,marginBottom:18}}>＋ Nuova partita</Btn>}
           {!matches||matches.length===0?<Empty emoji="⚽" text="Nessuna partita ancora."/>:
             [...(matches||[])].reverse().map(m=>(
               <div key={m.id} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:14,marginBottom:8}}>
@@ -332,47 +530,67 @@ function MatchSection({players,matches,isAdmin,dbUrl,reload}){
                   <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                     {["white","black"].map(t=><span key={t} style={{padding:"3px 12px",borderRadius:6,fontSize:12,fontWeight:700,background:m.winner===t?C.accent+"22":C.card2,color:m.winner===t?C.accent:C.muted,border:`1px solid ${m.winner===t?C.accent+"50":C.border}`}}>{t==="white"?"⬜ BIANCHI":"⬛ NERI"} {m.winner===t?"🏆":""}</span>)}
                   </div>
-                  {isAdmin&&<button onClick={()=>deleteMatch(m.id)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16}}>✕</button>}
+                  {isAdmin&&<button onClick={()=>setDelId(m.id)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16}}>✕</button>}
                 </div>
                 <div style={{display:"flex",gap:16}}>
-                  {["white","black"].map(t=><div key={t} style={{flex:1}}><div style={{fontSize:10,color:C.muted,marginBottom:4}}>{t==="white"?"BIANCHI":"NERI"}</div>{(m[t]||[]).map(id=><div key={id} style={{fontSize:12,color:C.text,marginBottom:2}}>{getP(id)?.name||id}</div>)}</div>)}
+                  {["white","black"].map(t=><div key={t} style={{flex:1}}><div style={{fontSize:10,color:C.muted,marginBottom:4}}>{t==="white"?"BIANCHI":"NERI"}</div>{(m[t]||[]).map(id=><div key={id} style={{fontSize:12,color:C.text,marginBottom:2}}>{getP(id)?.name||id}{m.goals?.[id]?<span style={{color:C.muted}}> · {m.goals[id]}⚽</span>:null}</div>)}</div>)}
                   {m.mvp&&<div><div style={{fontSize:10,color:C.muted,marginBottom:4}}>MVP</div><div style={{fontSize:12,color:C.accent}}>⭐ {getP(m.mvp)?.name}</div></div>}
                 </div>
                 <div style={{fontSize:11,color:C.muted,marginTop:8}}>{new Date(m.date).toLocaleDateString("it-IT",{day:"2-digit",month:"short",year:"numeric"})}</div>
               </div>
             ))
           }
+          {delId&&(
+            <Modal onClose={()=>setDelId(null)}>
+              <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:24,letterSpacing:2,color:C.text,marginBottom:10}}>ELIMINARE LA PARTITA?</div>
+              <div style={{fontSize:13,color:C.muted,marginBottom:18}}>Le statistiche dei giocatori coinvolti tornano indietro da sole: sono calcolate dalle partite.</div>
+              <div style={{display:"flex",gap:8}}>
+                <Btn onClick={()=>setDelId(null)} variant="ghost" style={{flex:1}}>Annulla</Btn>
+                <Btn onClick={()=>deleteMatch(delId)} variant="danger" style={{flex:1}}>Elimina</Btn>
+              </div>
+            </Modal>
+          )}
         </>
       )}
-      {phase==="setup"&&(
+
+      {phase==="teams"&&(
         <>
-          <button onClick={reset} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",marginBottom:16,fontSize:13,fontFamily:"'DM Sans',sans-serif"}}>← Indietro</button>
-          <div style={{fontSize:12,color:C.muted,marginBottom:12}}>Assegna ogni giocatore a una squadra</div>
+          <StepBar phase={phase}/>
+          <div style={{fontSize:12,color:C.muted,marginBottom:12}}>Assegna ogni giocatore a una squadra · <strong style={{color:C.text}}>{white.length}</strong> vs <strong style={{color:C.text}}>{black.length}</strong></div>
           {(players||[]).map(p=>{
             const iW=white.includes(p.id),iB=black.includes(p.id);
             return(
-              <div key={p.id} style={{display:"flex",alignItems:"center",gap:10,background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 14px",marginBottom:8}}>
+              <div key={p.id} style={{display:"flex",alignItems:"center",gap:10,background:C.card,border:`1px solid ${iW||iB?C.accent+"35":C.border}`,borderRadius:10,padding:"10px 14px",marginBottom:8}}>
                 <Avatar player={p} size={36}/><span style={{flex:1,fontWeight:600,fontSize:14,color:C.text}}>{p.name}</span>
                 <div style={{display:"flex",gap:6}}>
-                  {["white","black"].map(t=>{const active=t==="white"?iW:iB;return<button key={t} onClick={()=>assign(p.id,t)} style={{padding:"6px 14px",borderRadius:6,cursor:"pointer",fontWeight:700,fontSize:14,fontFamily:"'DM Sans',sans-serif",border:`2px solid ${active?C.accent:C.border}`,background:active?(t==="white"?"#ffffff18":"#33333344"):C.card2,color:active?C.accent:C.muted,transition:"all .15s"}}>{t==="white"?"⬜":"⬛"}</button>;})}</div>
+                  {["white","black"].map(t=>{const active=t==="white"?iW:iB;return<button key={t} onClick={()=>assign(p.id,t)} style={{padding:"6px 14px",borderRadius:6,cursor:"pointer",fontWeight:700,fontSize:14,fontFamily:"'DM Sans',sans-serif",border:`2px solid ${active?C.accent:C.border}`,background:active?(t==="white"?"#ffffff18":"#33333344"):C.card2,color:active?C.accent:C.muted,transition:"all .15s"}}>{t==="white"?"⬜":"⬛"}</button>;})}
+                </div>
               </div>
             );
           })}
           <div style={{display:"flex",gap:8,marginTop:8}}>
             <Btn onClick={reset} variant="ghost" style={{flex:1}}>Annulla</Btn>
-            <Btn onClick={()=>setPhase("result")} style={{flex:2}}>Avanti: risultato →</Btn>
+            <Btn onClick={()=>setPhase("winner")} disabled={!white.length||!black.length} style={{flex:2}}>Avanti →</Btn>
           </div>
         </>
       )}
-      {phase==="result"&&(
+
+      {phase==="winner"&&(
         <>
-          <button onClick={()=>setPhase("setup")} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",marginBottom:16,fontSize:13,fontFamily:"'DM Sans',sans-serif"}}>← Modifica squadre</button>
-          <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:16,marginBottom:12}}>
-            <div style={{fontWeight:700,marginBottom:12,color:C.text,fontSize:14}}>Chi ha vinto?</div>
-            <div style={{display:"flex",gap:8}}>
-              {["white","black"].map(t=><button key={t} onClick={()=>setWinner(t)} style={{flex:1,padding:"13px 0",borderRadius:10,cursor:"pointer",border:`2px solid ${winner===t?C.accent:C.border}`,background:winner===t?C.accent+"18":C.card2,color:winner===t?C.accent:C.muted,fontWeight:800,fontSize:15,fontFamily:"'DM Sans',sans-serif",transition:"all .15s"}}>{t==="white"?"⬜ BIANCHI":"⬛ NERI"}</button>)}
-            </div>
+          <StepBar phase={phase}/>
+          {back("teams")}
+          <div style={{fontSize:12,color:C.muted,marginBottom:12}}>Tocca la squadra che ha vinto</div>
+          <div style={{display:"flex",gap:10,marginBottom:16}}>
+            {["white","black"].map(t=><TeamCard key={t} t={t} ids={t==="white"?white:black} selected={winner===t} onClick={()=>setWinner(t)}/>)}
           </div>
+          <Btn onClick={()=>setPhase("extra")} disabled={!winner} full style={{padding:"14px 0",fontSize:15,borderRadius:10}}>Avanti →</Btn>
+        </>
+      )}
+
+      {phase==="extra"&&(
+        <>
+          <StepBar phase={phase}/>
+          {back("winner")}
           <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:16,marginBottom:12}}>
             <div style={{fontWeight:700,marginBottom:10,color:C.text,fontSize:14}}>⭐ MVP (opzionale)</div>
             <select value={mvp} onChange={e=>setMvp(e.target.value)} style={{width:"100%",background:C.card2,border:`1px solid ${C.border}`,color:C.text,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"'DM Sans',sans-serif"}}>
@@ -380,13 +598,17 @@ function MatchSection({players,matches,isAdmin,dbUrl,reload}){
               {all.map(id=>{const p=getP(id);return p?<option key={id} value={id}>{p.name}</option>:null;})}
             </select>
           </div>
-          {all.length>0&&(
-            <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:16,marginBottom:16}}>
-              <div style={{fontWeight:700,marginBottom:12,color:C.text,fontSize:14}}>⚽ Gol segnati (opzionale)</div>
-              {all.map(id=>{const p=getP(id);return p?<div key={id} style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}><Avatar player={p} size={28}/><span style={{flex:1,fontSize:13,color:C.text}}>{p.name}</span><input type="number" min="0" max="20" placeholder="0" value={goals[p.id]||""} onChange={e=>setGoals(g=>({...g,[p.id]:e.target.value}))} style={{width:52,background:C.card2,border:`1px solid ${C.border}`,color:C.text,borderRadius:6,padding:"6px 8px",fontSize:14,textAlign:"center",fontFamily:"'DM Sans',sans-serif"}}/></div>:null;})}
-            </div>
-          )}
-          <Btn onClick={submit} disabled={!winner} full style={{padding:"14px 0",fontSize:15,borderRadius:10}}>Salva partita ✓</Btn>
+          <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:16,marginBottom:16}}>
+            <div style={{fontWeight:700,marginBottom:12,color:C.text,fontSize:14}}>⚽ Gol segnati (opzionale)</div>
+            {all.map(id=>{const p=getP(id);return p?(
+              <div key={id} style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+                <Avatar player={p} size={28}/>
+                <span style={{flex:1,fontSize:13,color:C.text}}>{p.name}</span>
+                <span style={{fontSize:11,color:C.muted}}>{white.includes(id)?"⬜":"⬛"}</span>
+                <input type="number" min="0" max="20" placeholder="0" value={goals[id]||""} onChange={e=>setGoals(g=>({...g,[id]:e.target.value}))} style={{width:52,background:C.card2,border:`1px solid ${C.border}`,color:C.text,borderRadius:6,padding:"6px 8px",fontSize:14,textAlign:"center",fontFamily:"'DM Sans',sans-serif"}}/>
+              </div>):null;})}
+          </div>
+          <Btn onClick={submit} disabled={!winner||busy} full style={{padding:"14px 0",fontSize:15,borderRadius:10}}>{busy?"Salvo…":"Salva partita ✓"}</Btn>
         </>
       )}
     </div>
@@ -533,25 +755,66 @@ function TeamsSection({standings,dbUrl,teamSel,reload}){
 }
 
 /* ═══════════════════════════════════════════════════════
-   ROSA (solo admin può modificare)
+   ROSA (solo admin può modificare) + IMPORT EXCEL
 ═══════════════════════════════════════════════════════ */
-function PlayersSection({players,matches,isAdmin,dbUrl,reload}){
+function PlayersSection({players,matches,isAdmin,updatePlayers,setPhoto,removePlayer}){
   const [showAdd,setShowAdd]=useState(false), [newName,setNewName]=useState(""), [newPhoto,setNewPhoto]=useState(null);
   const [editId,setEditId]=useState(null), [editName,setEditName]=useState("");
-  const newPhotoRef=useRef(null);
+  const [busy,setBusy]=useState(false), [delP,setDelP]=useState(null);
+  const [imp,setImp]=useState(null), [impErr,setImpErr]=useState("");
+  const newPhotoRef=useRef(null), xlsRef=useRef(null);
 
   const submitAdd=async()=>{
-    if(!newName.trim())return;
-    const newP={id:uid(),name:newName.trim(),photo:newPhoto,overrides:{}};
-    await fbPut(dbUrl,"players",[...(players||[]),newP]);
-    setNewName("");setNewPhoto(null);setShowAdd(false);reload();
+    if(!newName.trim()||busy)return;
+    setBusy(true);
+    const id=uid();
+    await updatePlayers(list=>[...list,{id,name:newName.trim(),base:null,photoRev:null}]);
+    if(newPhoto) await setPhoto(id,newPhoto);
+    setNewName("");setNewPhoto(null);setShowAdd(false);setBusy(false);
   };
-  const updatePlayer=async(id,changes)=>{
-    const updated=(players||[]).map(p=>p.id===id?{...p,...changes}:p);
-    await fbPut(dbUrl,"players",updated); reload();
+  const rename=async(id,name)=>{
+    if(!name.trim())return setEditId(null);
+    await updatePlayers(list=>list.map(p=>p.id===id?{...p,name:name.trim()}:p));
+    setEditId(null);
   };
-  const deletePlayer=async id=>{
-    await fbPut(dbUrl,"players",(players||[]).filter(p=>p.id!==id)); reload();
+
+  /* ─── import Excel: Nome · Presenze · Vittorie · Gol · MVP ─── */
+  const readFile=async file=>{
+    setImpErr("");
+    if(typeof XLSX==="undefined"){setImpErr("Libreria Excel non caricata: controlla la connessione e ricarica.");return;}
+    try{
+      const wb=XLSX.read(await file.arrayBuffer(),{type:"array"});
+      const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:""});
+      const parsed=[]; let skipped=0;
+      for(const row of rows){
+        const f=readRow(row);
+        const name=String(f.name??"").trim();
+        if(!name){skipped++;continue;}
+        if(parsed.some(r=>norm(r.name)===norm(name))){skipped++;continue;}
+        parsed.push({name,
+          presences:Math.max(0,Math.round(+f.presences||0)),
+          wins:Math.max(0,Math.round(+f.wins||0)),
+          goals:Math.max(0,Math.round(+f.goals||0)),
+          mvps:Math.max(0,Math.round(+f.mvps||0)),
+          exists:(players||[]).some(p=>norm(p.name)===norm(name))});
+      }
+      if(!parsed.length){setImpErr("Nessuna riga valida. Serve una colonna 'Nome' (poi Presenze, Vittorie, Gol, MVP).");return;}
+      setImp({rows:parsed,skipped,sheet:wb.SheetNames[0]});
+    }catch(e){setImpErr("File non leggibile: "+e.message);}
+  };
+  const applyImport=async()=>{
+    setBusy(true);
+    await updatePlayers(list=>{
+      const out=list.map(p=>({...p}));
+      for(const r of imp.rows){
+        const totals={presences:r.presences,wins:r.wins,goals:r.goals,mvps:r.mvps};
+        const i=out.findIndex(p=>norm(p.name)===norm(r.name));
+        if(i>=0){ out[i].base=baseFromTotals(totals,computeStats(out[i],matches).auto); out[i].overrides=null; }
+        else out.push({id:uid(),name:r.name,base:baseFromTotals(totals,ZERO),photoRev:null});
+      }
+      return out;
+    });
+    setBusy(false);setImp(null);
   };
 
   return(
@@ -559,21 +822,28 @@ function PlayersSection({players,matches,isAdmin,dbUrl,reload}){
       <Banner title="ROSA" sub={isAdmin?"Gestisci l'anagrafica dei giocatori":"Anagrafica giocatori"}/>
       {isAdmin&&(
         <>
-          <Btn onClick={()=>setShowAdd(s=>!s)} full style={{padding:"12px 0",marginBottom:14,borderRadius:10}}>{showAdd?"✕ Annulla":"＋ Aggiungi giocatore"}</Btn>
+          <div style={{display:"flex",gap:8,marginBottom:14}}>
+            <Btn onClick={()=>setShowAdd(s=>!s)} style={{flex:2,padding:"12px 0",borderRadius:10}}>{showAdd?"✕ Annulla":"＋ Aggiungi giocatore"}</Btn>
+            <Btn onClick={()=>xlsRef.current?.click()} variant="dark" style={{flex:1,padding:"12px 0",borderRadius:10}}>📊 Excel</Btn>
+          </div>
+          <input type="file" accept=".xlsx,.xls,.csv" ref={xlsRef} style={{display:"none"}}
+            onChange={e=>{const f=e.target.files[0];e.target.value="";if(f)readFile(f);}}/>
+          {impErr&&<div style={{background:C.red+"15",border:`1px solid ${C.red}40`,borderRadius:10,padding:12,marginBottom:12,fontSize:13,color:C.red}}>{impErr}</div>}
           {showAdd&&(
             <div style={{background:C.card,border:`1px solid ${C.accent}35`,borderRadius:14,padding:18,marginBottom:16}}>
               <div style={{display:"flex",gap:14,alignItems:"center",marginBottom:14}}>
                 <div onClick={()=>newPhotoRef.current?.click()} style={{width:64,height:64,borderRadius:"50%",background:C.card2,border:`2px dashed ${C.accent}`,cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
                   {newPhoto?<img src={newPhoto} style={{width:"100%",height:"100%",objectFit:"cover"}}/>:<span style={{fontSize:24}}>📷</span>}
                 </div>
-                <input type="file" accept="image/*" ref={newPhotoRef} style={{display:"none"}} onChange={async e=>{if(e.target.files[0]){const b=await resizePhoto(e.target.files[0]);setNewPhoto(b);}}}/>
+                <input type="file" accept="image/*" ref={newPhotoRef} style={{display:"none"}} onChange={async e=>{const f=e.target.files[0];if(f){const b=await resizePhoto(f);setNewPhoto(b);}}}/>
                 <input placeholder="Nome giocatore…" value={newName} onChange={e=>setNewName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submitAdd()} style={{flex:1,background:C.card2,border:`1px solid ${C.border}`,color:C.text,borderRadius:8,padding:"10px 14px",fontSize:14,fontFamily:"'DM Sans',sans-serif"}}/>
               </div>
-              <Btn onClick={submitAdd} full style={{padding:"10px 0"}}>Aggiungi</Btn>
+              <Btn onClick={submitAdd} disabled={busy} full style={{padding:"10px 0"}}>{busy?"Aggiungo…":"Aggiungi"}</Btn>
             </div>
           )}
         </>
       )}
+
       {!players||players.length===0?<Empty emoji="👥" text={isAdmin?"Nessun giocatore. Aggiungine uno!":"Nessun giocatore ancora."}/>:
         (players||[]).map(p=>{
           const s=computeStats(p,matches), isEd=editId===p.id;
@@ -587,29 +857,29 @@ function PlayersSection({players,matches,isAdmin,dbUrl,reload}){
                         <Avatar player={p} size={58}/>
                         <div style={{position:"absolute",bottom:-2,right:-2,background:C.accent,borderRadius:"50%",width:20,height:20,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10}}>📷</div>
                       </label>
-                      <input id={`ph-${p.id}`} type="file" accept="image/*" style={{display:"none"}} onChange={async e=>{if(e.target.files[0]){const b=await resizePhoto(e.target.files[0]);updatePlayer(p.id,{photo:b});}}}/>
+                      <input id={`ph-${p.id}`} type="file" accept="image/*" style={{display:"none"}} onChange={async e=>{const f=e.target.files[0];e.target.value="";if(f)await setPhoto(p.id,f);}}/>
                     </>
                   ):<Avatar player={p} size={58}/>}
                 </div>
                 <div style={{flex:1,minWidth:0}}>
                   {isAdmin&&isEd
-                    ?<input value={editName} onChange={e=>setEditName(e.target.value)} autoFocus onKeyDown={e=>{if(e.key==="Enter"){updatePlayer(p.id,{name:editName});setEditId(null);}}} style={{width:"100%",background:C.card2,border:`1px solid ${C.accent}`,color:C.text,borderRadius:6,padding:"7px 10px",fontSize:15,fontFamily:"'DM Sans',sans-serif",fontWeight:700}}/>
+                    ?<input value={editName} onChange={e=>setEditName(e.target.value)} autoFocus onKeyDown={e=>e.key==="Enter"&&rename(p.id,editName)} style={{width:"100%",background:C.card2,border:`1px solid ${C.accent}`,color:C.text,borderRadius:6,padding:"7px 10px",fontSize:15,fontFamily:"'DM Sans',sans-serif",fontWeight:700}}/>
                     :<div style={{fontWeight:800,fontSize:16,color:C.text}}>{p.name}</div>
                   }
                   <div style={{fontSize:12,color:C.muted,marginTop:3}}>Media: <span style={{color:C.accent,fontWeight:700}}>{s.avg.toFixed(2)}</span> · {s.presences} presenze</div>
                 </div>
                 {isAdmin&&(
                   <div style={{display:"flex",gap:6,flexShrink:0}}>
-                    {isEd?<Btn onClick={()=>{updatePlayer(p.id,{name:editName});setEditId(null);}} small>✓</Btn>
+                    {isEd?<Btn onClick={()=>rename(p.id,editName)} small>✓</Btn>
                       :<button onClick={()=>{setEditId(p.id);setEditName(p.name);}} style={{background:"none",border:`1px solid ${C.border}`,color:C.muted,borderRadius:6,padding:"6px 10px",cursor:"pointer",fontSize:14}}>✏️</button>}
-                    <button onClick={()=>deletePlayer(p.id)} style={{background:"none",border:`1px solid ${C.red}30`,color:C.red,borderRadius:6,padding:"6px 10px",cursor:"pointer",fontSize:14}}>🗑️</button>
+                    <button onClick={()=>setDelP(p)} style={{background:"none",border:`1px solid ${C.red}30`,color:C.red,borderRadius:6,padding:"6px 10px",cursor:"pointer",fontSize:14}}>🗑️</button>
                   </div>
                 )}
               </div>
               <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",marginTop:16,paddingTop:14,borderTop:`1px solid ${C.border}`}}>
-                {[{l:"PRESENZE",v:s.presences},{l:"VINTE",v:s.wins},{l:"GOL",v:s.goals},{l:"MVP",v:s.mvps},{l:"MEDIA",v:s.avg.toFixed(2)}].map((st,i)=>(
+                {[{l:"PRESENZE",v:s.presences,f:"presences"},{l:"VINTE",v:s.wins,f:"wins"},{l:"GOL",v:s.goals,f:"goals"},{l:"MVP",v:s.mvps,f:"mvps"},{l:"MEDIA",v:s.avg.toFixed(2),f:null}].map((st,i)=>(
                   <div key={i} style={{textAlign:"center",borderRight:i<4?`1px solid ${C.border}`:"none"}}>
-                    <div style={{fontWeight:800,fontSize:20,color:i===4?C.accent:C.text}}>{st.v}</div>
+                    <div style={{fontWeight:800,fontSize:20,color:i===4?C.accent:C.text}}>{st.v}{st.f&&s.base[st.f]!==0&&<span style={{fontSize:9,color:C.accent,verticalAlign:"super"}}>✎</span>}</div>
                     <div style={{fontSize:9,color:C.muted,letterSpacing:.6,marginTop:2}}>{st.l}</div>
                   </div>
                 ))}
@@ -618,6 +888,42 @@ function PlayersSection({players,matches,isAdmin,dbUrl,reload}){
           );
         })
       }
+
+      {delP&&(
+        <Modal onClose={()=>setDelP(null)}>
+          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:24,letterSpacing:2,color:C.text,marginBottom:10}}>ELIMINARE {delP.name.toUpperCase()}?</div>
+          <div style={{fontSize:13,color:C.muted,marginBottom:18}}>Sparisce dalla rosa e dalla classifica. Le partite già registrate restano, ma non mostreranno più il suo nome.</div>
+          <div style={{display:"flex",gap:8}}>
+            <Btn onClick={()=>setDelP(null)} variant="ghost" style={{flex:1}}>Annulla</Btn>
+            <Btn onClick={async()=>{setBusy(true);await removePlayer(delP.id);setBusy(false);setDelP(null);}} variant="danger" style={{flex:1}}>Elimina</Btn>
+          </div>
+        </Modal>
+      )}
+
+      {imp&&(
+        <Modal onClose={()=>setImp(null)}>
+          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:24,letterSpacing:2,color:C.text,marginBottom:4}}>IMPORT EXCEL</div>
+          <div style={{fontSize:12,color:C.muted,marginBottom:14}}>
+            Foglio "{imp.sheet}" · <strong style={{color:C.accent}}>{imp.rows.filter(r=>!r.exists).length}</strong> nuovi,
+            {" "}<strong style={{color:C.text}}>{imp.rows.filter(r=>r.exists).length}</strong> da aggiornare
+            {imp.skipped>0&&<> · {imp.skipped} righe ignorate</>}
+          </div>
+          <div style={{maxHeight:230,overflowY:"auto",marginBottom:14,border:`1px solid ${C.border}`,borderRadius:8}}>
+            {imp.rows.map((r,i)=>(
+              <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",borderBottom:i<imp.rows.length-1?`1px solid ${C.border}`:"none"}}>
+                <span style={{flex:1,fontSize:13,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.name}</span>
+                <span style={{fontSize:11,color:C.muted}}>{r.presences}·{r.wins}·{r.goals}·{r.mvps}</span>
+                {!r.exists&&<Tag>NUOVO</Tag>}
+              </div>
+            ))}
+          </div>
+          <div style={{fontSize:11,color:C.muted,marginBottom:14}}>I numeri importati diventano la base di partenza: le partite registrate nell'app si sommano a questi valori.</div>
+          <div style={{display:"flex",gap:8}}>
+            <Btn onClick={()=>setImp(null)} variant="ghost" style={{flex:1}}>Annulla</Btn>
+            <Btn onClick={applyImport} disabled={busy} style={{flex:1}}>{busy?"Importo…":"Importa"}</Btn>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
@@ -635,40 +941,130 @@ const NAV=[
 function CialtronApp(){
   const [dbUrl,setDbUrl]=useState(()=>localStorage.getItem("cia-db-url")||"");
   const [tab,setTab]=useState("standings");
-  const [players,setPlayers]=useState([]);
+  const [players,setPlayers]=useState([]);     // grezzi, senza foto
   const [matches,setMatches]=useState([]);
   const [teamSel,setTeamSel]=useState(null);
+  const [photoCache,setPhotoCache]=useState(readPhotoCache);
   const [isAdmin,setIsAdmin]=useState(false);
   const [showAdmin,setShowAdmin]=useState(false);
   const [conn,setConn]=useState(false);
-  const pollRef=useRef(null);
+  const pollRef=useRef(null), playersRef=useRef([]), migrRef=useRef(false);
+  playersRef.current=players;
 
+  /* legge i tre nodi che servono: il nodo photos resta fuori dal polling */
   const reload=useCallback(async()=>{
     if(!dbUrl)return;
-    const d=await fbGet(dbUrl);
-    if(d!==null){
-      setPlayers(Array.isArray(d.players)?d.players:[]);
-      setMatches(Array.isArray(d.matches)?d.matches:[]);
-      setTeamSel(d.teamSelection||{phase:"idle",assign:{},captainSide:null});
-      setConn(true);
-    } else setConn(false);
+    const [pl,mt,ts]=await Promise.all([
+      fbFetch(dbUrl,"players"),fbFetch(dbUrl,"matches"),fbFetch(dbUrl,"teamSelection")]);
+    if(!pl.ok){setConn(false);return;}
+    setConn(true);
+    setPlayers(Array.isArray(pl.data)?pl.data.filter(Boolean):[]);
+    setMatches(Array.isArray(mt.data)?mt.data.filter(Boolean):[]);
+    setTeamSel(ts.data||{phase:"idle",assign:{},captainSide:null});
   },[dbUrl]);
 
   useEffect(()=>{
-    if(!dbUrl){document.getElementById("splash").style.display="none";return;}
-    reload();
-    // Poll ogni 3s (abbastanza veloce per team selection)
-    pollRef.current=setInterval(reload,3000);
-    document.getElementById("splash").style.display="none";
+    const sp=document.getElementById("splash");
+    if(!dbUrl){if(sp)sp.style.display="none";return;}
+    reload().then(()=>{if(sp)sp.style.display="none";});
+    pollRef.current=setInterval(reload,3000);   // abbastanza veloce per la selezione squadre
     return()=>clearInterval(pollRef.current);
   },[dbUrl,reload]);
 
+  /* tutte le scritture su players passano di qui: il payload nasce sempre
+     dai dati grezzi, mai dagli oggetti arricchiti per la vista */
+  const updatePlayers=useCallback(async fn=>{
+    const next=fn(playersRef.current.map(p=>({...p})));
+    const ok=await fbPut(dbUrl,"players",next);
+    if(ok){playersRef.current=next;setPlayers(next);}
+    reload();
+    return ok;
+  },[dbUrl,reload]);
+
+  const saveMatches=useCallback(async next=>{
+    const ok=await fbPut(dbUrl,"matches",next);
+    if(ok)setMatches(next);
+    reload();
+    return ok;
+  },[dbUrl,reload]);
+
+  /* foto: base64 su photos/<id>, in players solo photoRev */
+  const setPhoto=useCallback(async(id,src)=>{
+    const b64=!src?null:(typeof src==="string"?src:await resizePhoto(src));
+    if(src&&!b64)return false;
+    if(!await fbPut(dbUrl,"photos/"+id,b64))return false;
+    const rev=Date.now();
+    await updatePlayers(list=>list.map(p=>p.id===id?{...p,photo:null,photoRev:rev}:p));
+    writePhotoCache(id,b64,rev);
+    setPhotoCache(c=>({...c,[id]:b64||undefined}));
+    return true;
+  },[dbUrl,updatePlayers]);
+
+  const removePlayer=useCallback(async id=>{
+    await fbDel(dbUrl,"photos/"+id);
+    dropPhotoCache(id);
+    setPhotoCache(c=>{const n={...c};delete n[id];return n;});
+    return updatePlayers(list=>list.filter(p=>p.id!==id));
+  },[dbUrl,updatePlayers]);
+
+  /* scarica una foto solo quando il suo photoRev è cambiato */
+  const photoSig=useMemo(()=>players.map(p=>p.id+":"+(p.photoRev||0)).join("|"),[players]);
+  useEffect(()=>{
+    if(!dbUrl)return; let dead=false;
+    (async()=>{
+      for(const p of playersRef.current){
+        if(!p.photoRev)continue;
+        const rev=String(p.photoRev);
+        if(localStorage.getItem(PH_REV(p.id))===rev)continue;
+        const r=await fbFetch(dbUrl,"photos/"+p.id);
+        if(dead)return;
+        if(!r.ok)continue;
+        writePhotoCache(p.id,r.data,rev);
+        setPhotoCache(c=>({...c,[p.id]:r.data||undefined}));
+      }
+    })();
+    return()=>{dead=true;};
+  },[dbUrl,photoSig]);
+
+  /* migrazione una tantum (la fa l'admin): foto fuori da players,
+     vecchi overrides tradotti in base mantenendo i totali già a schermo */
+  useEffect(()=>{
+    if(!isAdmin||!dbUrl||migrRef.current)return;
+    const oldPhoto=players.filter(p=>p.photo&&!p.photoRev);
+    const oldOver=players.filter(p=>p.overrides&&Object.keys(p.overrides).length&&!p.base);
+    if(!oldPhoto.length&&!oldOver.length)return;
+    migrRef.current=true;
+    (async()=>{
+      const rev=Date.now();
+      for(const p of oldPhoto){
+        if(await fbPut(dbUrl,"photos/"+p.id,p.photo)){
+          writePhotoCache(p.id,p.photo,rev);
+          setPhotoCache(c=>({...c,[p.id]:p.photo}));
+        }
+      }
+      await updatePlayers(list=>list.map(p=>{
+        const n={...p};
+        if(n.photo&&!n.photoRev){n.photoRev=rev;n.photo=null;}
+        if(n.overrides&&!n.base){
+          const auto=computeStats({...n,base:null},matches).auto;
+          const totals={};
+          for(const f of FIELDS) totals[f]=n.overrides[f]??auto[f];
+          n.base=baseFromTotals(totals,auto);
+          n.overrides=null;
+        }
+        return n;
+      }));
+      migrRef.current=false;
+    })();
+  },[isAdmin,dbUrl,photoSig,players,matches,updatePlayers]);
+
+  const playersView=useMemo(()=>players.map(p=>({...p,photo:photoCache[p.id]||p.photo||null})),[players,photoCache]);
   const standings=useMemo(()=>
-    players.map(p=>({...p,stats:computeStats(p,matches)})).sort((a,b)=>b.stats.avg-a.stats.avg||b.stats.points-a.stats.points),
-    [players,matches]
+    playersView.map(p=>({...p,stats:computeStats(p,matches)})).sort((a,b)=>b.stats.avg-a.stats.avg||b.stats.points-a.stats.points),
+    [playersView,matches]
   );
 
-  if(!dbUrl) return <SetupScreen onComplete={url=>{localStorage.setItem("cia-db-url",url);setDbUrl(url);}}/>;
+  if(!dbUrl) return <SetupScreen onComplete={setDbUrl}/>;
 
   return(
     <div style={{background:C.bg,minHeight:"100vh",fontFamily:"'DM Sans',sans-serif",color:C.text}}>
@@ -691,14 +1087,12 @@ function CialtronApp(){
             <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,color:C.text,lineHeight:1}}>{matches.length}</div>
             <div style={{fontSize:9,color:C.muted}}>PART.</div>
           </div>
-          {/* Admin toggle */}
           <button onClick={()=>isAdmin?setIsAdmin(false):setShowAdmin(true)} style={{background:isAdmin?C.accent+"22":"none",border:`1px solid ${isAdmin?C.accent:C.border}`,color:isAdmin?C.accent:C.muted,borderRadius:8,padding:"6px 10px",cursor:"pointer",fontSize:12,fontFamily:"'DM Sans',sans-serif",fontWeight:700,marginLeft:4}}>
             {isAdmin?"🔓 ADMIN":"🔒"}
           </button>
         </div>
       </header>
 
-      {/* ADMIN LOGIN MODAL */}
       {showAdmin&&<AdminModal dbUrl={dbUrl} onLogin={()=>{setIsAdmin(true);setShowAdmin(false);}} onClose={()=>setShowAdmin(false)}/>}
 
       {/* NAV */}
@@ -713,10 +1107,10 @@ function CialtronApp(){
 
       {/* CONTENT */}
       <main style={{maxWidth:700,margin:"0 auto",padding:"22px 14px 100px"}}>
-        {tab==="standings"&&<StandingsSection standings={standings} isAdmin={isAdmin} dbUrl={dbUrl} reload={reload}/>}
-        {tab==="match"    &&<MatchSection players={players} matches={matches} isAdmin={isAdmin} dbUrl={dbUrl} reload={reload}/>}
+        {tab==="standings"&&<StandingsSection standings={standings} isAdmin={isAdmin} updatePlayers={updatePlayers}/>}
+        {tab==="match"    &&<MatchSection players={playersView} matches={matches} isAdmin={isAdmin} saveMatches={saveMatches}/>}
         {tab==="teams"    &&<TeamsSection standings={standings} dbUrl={dbUrl} teamSel={teamSel} reload={reload}/>}
-        {tab==="players"  &&<PlayersSection players={players} matches={matches} isAdmin={isAdmin} dbUrl={dbUrl} reload={reload}/>}
+        {tab==="players"  &&<PlayersSection players={playersView} matches={matches} isAdmin={isAdmin} updatePlayers={updatePlayers} setPhoto={setPhoto} removePlayer={removePlayer}/>}
       </main>
     </div>
   );
