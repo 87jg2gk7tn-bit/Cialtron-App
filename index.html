@@ -18,6 +18,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@400;600;700;800&display=swap" rel="stylesheet"/>
   <style>
     *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -40,6 +41,9 @@
 <body>
 <div id="splash"><div class="ball">⚽</div><div style="letter-spacing:2px;font-size:12px">CARICAMENTO…</div></div>
 <div id="root"></div>
+<script>/* la shell viene sempre ripresa dalla rete quando c'è: così una modifica
+   pubblicata si vede alla riapertura, e senza rete resta la copia salvata */
+if("serviceWorker" in navigator)window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));</script>
 <script type="text/babel" data-presets="react">
 const {useState,useEffect,useRef,useMemo,useCallback} = React;
 
@@ -52,7 +56,7 @@ const C={accent:"#B8FF00",bg:"#090909",card:"#111",card2:"#1A1A1A",card3:"#222",
 /* Versione pubblicata: confrontata con version.json per avvisare che c'è
    un aggiornamento. Sul telefono la pagina resta in cache, senza questo
    controllo le modifiche non arriverebbero finché non si svuota la cache. */
-const APP_VERSION="2026-08-28.3";
+const APP_VERSION="2026-08-28.4";
 
 function useUpdateCheck(){
   const [next,setNext]=useState(null);
@@ -75,28 +79,52 @@ function useUpdateCheck(){
   return next;
 }
 /* ═══════════════════════════════════════════════════════
-   FIREBASE REST HELPERS
+   SUPABASE — configurazione del progetto, client, invito
 ═══════════════════════════════════════════════════════ */
-/* fbFetch distingue "il nodo è vuoto" da "la richiesta è fallita": senza
-   questa distinzione il setup rischia di scrivere sopra un gruppo esistente. */
-const fbFetch = async (dbUrl, path="") => {
+const CFG_KEY="cialtron_cfg", GROUP_KEY="cialtron_group";
+
+const loadCfg=()=>{try{return JSON.parse(localStorage.getItem(CFG_KEY)||"null");}catch(e){return null;}};
+const saveCfg=c=>{try{localStorage.setItem(CFG_KEY,JSON.stringify(c));}catch(e){}};
+
+function makeClient(cfg){
+  if(!cfg||!cfg.url||!cfg.key||typeof supabase==="undefined")return null;
   try{
-    const r=await fetch(`${dbUrl}${path?"/"+path:""}.json`,{cache:"no-store"});
+    return supabase.createClient(cfg.url,cfg.key,
+      {auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true,flowType:"implicit"}});
+  }catch(e){return null;}
+}
+
+/* Il codice invito si porta dietro l'indirizzo del progetto: chi lo riceve non
+   deve configurare niente a mano, gli basta il codice (o il link). */
+const packInvite=(code,cfg)=>{try{return code+"~"+btoa(cfg.url+"|"+cfg.key);}catch(e){return code;}};
+function unpackInvite(raw){
+  const s=String(raw||"").trim();
+  const i=s.indexOf("~");
+  if(i<0)return{code:s.toLowerCase(),cfg:null};
+  let cfg=null;
+  try{const p=atob(s.slice(i+1)).split("|");if(p[0]&&p[1])cfg={url:p[0],key:p[1]};}catch(e){}
+  return{code:s.slice(0,i).toLowerCase(),cfg};
+}
+const inviteLink=(code,cfg)=>location.origin+location.pathname+"#join="+encodeURIComponent(packInvite(code,cfg));
+
+/* Lettura del vecchio database Firebase: serve solo alla migrazione una tantum. */
+const fbFetch=async(dbUrl,path="")=>{
+  try{
+    const r=await fetch(`${String(dbUrl).replace(/\/+$/,"")}${path?"/"+path:""}.json`,{cache:"no-store"});
     return r.ok?{ok:true,data:await r.json()}:{ok:false,data:null};
-  }catch{return{ok:false,data:null};}
+  }catch(e){return{ok:false,data:null};}
 };
-const fbGet = async (dbUrl, path="") => (await fbFetch(dbUrl,path)).data;
-const fbPut = async (dbUrl, path, data) => {
-  try{const r=await fetch(`${dbUrl}/${path}.json`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});return r.ok;}
-  catch{return false;}
-};
-const fbPatch = async (dbUrl, path, data) => {
-  try{const r=await fetch(`${dbUrl}/${path}.json`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});return r.ok;}
-  catch{return false;}
-};
-const fbDel = async (dbUrl, path) => {
-  try{const r=await fetch(`${dbUrl}/${path}.json`,{method:"DELETE"});return r.ok;}
-  catch{return false;}
+
+const errText=e=>{
+  const m=(e&&(e.message||e.error_description||e.error))||"";
+  if(/Invalid login credentials/i.test(m))return "Email o password sbagliate";
+  if(/Email not confirmed/i.test(m))return "Devi confermare l'email, oppure disattiva la conferma in Supabase";
+  if(/User already registered/i.test(m))return "Esiste già un account con questa email: usa Entra";
+  if(/Password should be at least/i.test(m))return "La password deve avere almeno 6 caratteri";
+  if(/rate limit|too many/i.test(m))return "Troppi tentativi ravvicinati, aspetta un minuto";
+  if(/row-level security/i.test(m))return "Il database ha rifiutato l'operazione: non hai i permessi per farla";
+  if(/relation .* does not exist|schema cache/i.test(m))return "Le tabelle non ci sono: incolla supabase.sql nel SQL Editor di Supabase e premi Run";
+  return m||"Errore imprevisto";
 };
 
 /* ═══════════════════════════════════════════════════════
@@ -148,29 +176,31 @@ function baseFromTotals(totals, auto){
   return manual?base:null;
 }
 
-/* ─── foto: fuori dal nodo players, con cache locale ───
-   Nel database stanno in photos/<id>; players porta solo photoRev, così il
-   polling ogni 3 s non riscarica i base64 di tutta la rosa. */
-const PH_DATA=id=>"cia-photo-"+id, PH_REV=id=>"cia-photorev-"+id;
+/* ─── foto: tabella a parte, con cache locale ───
+   Nel database stanno in photos(group_id,player_id): non entrano nel documento
+   del gruppo, così ogni aggiornamento della classifica non se le trascina dietro.
+   Qui restano in cache e si riscaricano solo quando cambia il loro rev. */
+const PH_DATA=(g,id)=>"cia-photo-"+g+"-"+id, PH_REV=(g,id)=>"cia-photorev-"+g+"-"+id;
 
-function readPhotoCache(){
-  const m={};
+function readPhotoCache(g){
+  const m={};if(!g)return m;
+  const pre="cia-photo-"+g+"-";
   try{
     for(let i=0;i<localStorage.length;i++){
       const k=localStorage.key(i);
-      if(k&&k.startsWith("cia-photo-")) m[k.slice(10)]=localStorage.getItem(k);
+      if(k&&k.startsWith(pre))m[k.slice(pre.length)]=localStorage.getItem(k);
     }
   }catch(e){}
   return m;
 }
-function writePhotoCache(id,b64,rev){
+function writePhotoCache(g,id,b64,rev){
   try{
-    if(b64) localStorage.setItem(PH_DATA(id),b64); else localStorage.removeItem(PH_DATA(id));
-    localStorage.setItem(PH_REV(id),String(rev||""));
+    if(b64)localStorage.setItem(PH_DATA(g,id),b64);else localStorage.removeItem(PH_DATA(g,id));
+    localStorage.setItem(PH_REV(g,id),String(rev||""));
   }catch(e){}
 }
-function dropPhotoCache(id){
-  try{localStorage.removeItem(PH_DATA(id));localStorage.removeItem(PH_REV(id));}catch(e){}
+function dropPhotoCache(g,id){
+  try{localStorage.removeItem(PH_DATA(g,id));localStorage.removeItem(PH_REV(g,id));}catch(e){}
 }
 
 /* ─── import Excel: intestazioni accettate per ogni colonna ─── */
@@ -244,119 +274,413 @@ function Input({label,value,onChange,type="text",placeholder,autoFocus}){return(
 );}
 
 /* ═══════════════════════════════════════════════════════
-   SETUP SCREEN (prima visita — inserisci URL Firebase)
+   SCHERMATA 1 — a quale progetto Supabase ci si collega
 ═══════════════════════════════════════════════════════ */
-function SetupScreen({onComplete}){
-  const [url,setUrl]=useState(""), [pin,setPin]=useState("");
-  const [busy,setBusy]=useState(false), [err,setErr]=useState("");
-  const [found,setFound]=useState(null); // null = non verificato · false = vuoto · oggetto = gruppo esistente
+function Shell({children}){return(
+  <div style={{minHeight:"100vh",background:C.bg,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+    <div style={{maxWidth:480,width:"100%"}}>
+      <div style={{textAlign:"center",marginBottom:28}}>
+        <div style={{fontSize:52,marginBottom:10}}>⚽</div>
+        <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:38,letterSpacing:4,color:C.text}}>CialtronApp</div>
+      </div>
+      {children}
+    </div>
+  </div>
+);}
 
-  const enter=u=>{localStorage.setItem("cia-db-url",u);onComplete(u);};
-  const summary=d=>({players:(d?.players||[]).length,matches:(d?.matches||[]).length});
-  const hasData=d=>!!(d&&(d.adminPin!=null||d.players||d.matches));
+function Card({title,children,tone}){return(
+  <div style={{background:C.card,border:`1px solid ${tone||C.border}`,borderRadius:16,padding:20,marginBottom:14}}>
+    {title&&<div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,letterSpacing:2,color:C.accent,marginBottom:14}}>{title}</div>}
+    {children}
+  </div>
+);}
 
-  const probe=async()=>{
-    setBusy(true);setErr("");
-    const clean=url.trim().replace(/\/+$/,"");
-    if(!clean.includes("firebaseio.com")){setErr("L'URL deve contenere 'firebaseio.com'");setBusy(false);return;}
-    const r=await fbFetch(clean);
-    if(!r.ok){setErr("Impossibile leggere il database. Controlla l'URL e le regole di lettura.");setBusy(false);return;}
-    setUrl(clean);
-    setFound(hasData(r.data)?summary(r.data):false);
-    setBusy(false);
+function Err({children}){return children?<div style={{background:C.red+"15",border:`1px solid ${C.red}40`,borderRadius:10,padding:12,marginBottom:12,fontSize:13,color:C.red,lineHeight:1.5}}>{children}</div>:null;}
+
+function ConfigScreen({onCfg,pendingInvite}){
+  const [mode,setMode]=useState(pendingInvite?"code":null);
+  const [url,setUrl]=useState(""), [key,setKey]=useState(""), [code,setCode]=useState(pendingInvite||"");
+  const [err,setErr]=useState("");
+
+  const fromCode=()=>{
+    const {cfg}=unpackInvite(code);
+    if(!cfg){setErr("Questo codice non contiene l'indirizzo del gruppo. Fattene mandare uno nuovo, o configura il progetto a mano.");return;}
+    saveCfg(cfg);onCfg(cfg,unpackInvite(code).code);
+  };
+  const manual=()=>{
+    const u=url.trim().replace(/\/+$/,""), k=key.trim();
+    if(!/^https:\/\/.+\.supabase\.co$/.test(u)){setErr("L'indirizzo deve essere tipo https://xxxxx.supabase.co");return;}
+    if(k.length<30){setErr("La chiave anon sembra incompleta");return;}
+    const cfg={url:u,key:k};saveCfg(cfg);onCfg(cfg,null);
   };
 
-  const create=async()=>{
-    if(pin.trim().length<4){setErr("Scegli un PIN di almeno 4 cifre");return;}
+  if(!mode)return(
+    <Shell>
+      <Card>
+        <div style={{fontSize:14,color:C.text,lineHeight:1.6,marginBottom:16}}>
+          Ogni giocatore ha il suo account. Il primo che arriva crea il gruppo, gli altri entrano con un codice invito.
+        </div>
+        <Btn onClick={()=>setMode("code")} full style={{padding:"14px 0",fontSize:15,borderRadius:12}}>Ho un codice invito</Btn>
+        <Btn onClick={()=>setMode("manual")} variant="ghost" full style={{padding:"12px 0",marginTop:10,borderRadius:12}}>Sto creando il gruppo da zero</Btn>
+      </Card>
+    </Shell>
+  );
+
+  if(mode==="code")return(
+    <Shell>
+      <Card title="IL CODICE CHE TI HANNO MANDATO">
+        <div style={{fontSize:13,color:C.muted,marginBottom:12,lineHeight:1.6}}>
+          Incolla il codice ricevuto. Contiene già tutto: non devi configurare niente.
+        </div>
+        <Input label="CODICE INVITO" value={code} onChange={v=>{setCode(v);setErr("");}} placeholder="a1b2c3d4~…"/>
+        <Err>{err}</Err>
+        <Btn onClick={fromCode} disabled={!code.trim()} full style={{padding:"14px 0",fontSize:15,borderRadius:12}}>Continua</Btn>
+        <Btn onClick={()=>{setMode(null);setErr("");}} variant="ghost" full style={{marginTop:8}}>Indietro</Btn>
+      </Card>
+    </Shell>
+  );
+
+  return(
+    <Shell>
+      <Card title="IL DATABASE DEL GRUPPO">
+        <div style={{fontSize:13,color:C.muted,lineHeight:1.8,marginBottom:14}}>
+          1. Vai su <strong style={{color:C.text}}>supabase.com</strong> → accedi → <strong style={{color:C.text}}>New project</strong><br/>
+          2. Aperto il progetto: <strong style={{color:C.text}}>SQL Editor</strong> → incolla il contenuto di <code style={{color:C.accent}}>supabase.sql</code> → <strong style={{color:C.text}}>Run</strong><br/>
+          3. <strong style={{color:C.text}}>Authentication → Sign In / Providers → Email</strong>: togli <em>Confirm email</em>, così si entra subito<br/>
+          4. <strong style={{color:C.text}}>Project Settings → API</strong>: copia qui sotto i due valori
+        </div>
+        <Input label="PROJECT URL" value={url} onChange={v=>{setUrl(v);setErr("");}} placeholder="https://xxxxx.supabase.co"/>
+        <Input label="CHIAVE ANON (publishable)" value={key} onChange={v=>{setKey(v);setErr("");}} placeholder="eyJhbGciOi…"/>
+        <Err>{err}</Err>
+        <Btn onClick={manual} disabled={!url||!key} full style={{padding:"14px 0",fontSize:15,borderRadius:12}}>Collega</Btn>
+        <Btn onClick={()=>{setMode(null);setErr("");}} variant="ghost" full style={{marginTop:8}}>Indietro</Btn>
+        <div style={{marginTop:12,fontSize:11,color:C.muted,textAlign:"center",lineHeight:1.6}}>
+          La chiave <em>anon</em> è fatta per stare dentro l'app: da sola non apre niente, sono le regole del database a decidere chi vede cosa. Non incollare mai qui la <em>service_role</em>.
+        </div>
+      </Card>
+    </Shell>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════
+   SCHERMATA 2 — il tuo account
+═══════════════════════════════════════════════════════ */
+function AuthGate({sb,onReset}){
+  const [email,setEmail]=useState(""), [pass,setPass]=useState("");
+  const [busy,setBusy]=useState(false), [err,setErr]=useState(""), [msg,setMsg]=useState("");
+
+  const run=async fn=>{setBusy(true);setErr("");setMsg("");try{await fn();}catch(e){setErr(errText(e));}setBusy(false);};
+  const entra=()=>run(async()=>{
+    const{error}=await sb.auth.signInWithPassword({email:email.trim(),password:pass});
+    if(error)throw error;
+  });
+  const crea=()=>run(async()=>{
+    if(pass.length<6)throw new Error("Password should be at least 6");
+    const{data,error}=await sb.auth.signUp({email:email.trim(),password:pass});
+    if(error)throw error;
+    if(!data.session)setMsg("Account creato. Se non entri subito, in Supabase → Authentication → Email togli \"Confirm email\", poi riprova con Entra.");
+  });
+  const scordata=()=>run(async()=>{
+    if(!email.trim())throw new Error("Scrivi prima la tua email qui sopra");
+    const{error}=await sb.auth.resetPasswordForEmail(email.trim(),{redirectTo:location.origin+location.pathname});
+    if(error)throw error;
+    setMsg("Ti ho mandato un'email per rifare la password.");
+  });
+
+  return(
+    <Shell>
+      <Card title="ENTRA CON IL TUO ACCOUNT">
+        <div style={{fontSize:13,color:C.muted,marginBottom:14,lineHeight:1.6}}>
+          Serve per sapere chi sei nel gruppo: le tue partite, la tua foto, e per la selezione squadre.
+        </div>
+        <Input label="EMAIL" value={email} onChange={v=>{setEmail(v);setErr("");}} placeholder="tu@esempio.it"/>
+        <Input label="PASSWORD" type="password" value={pass} onChange={v=>{setPass(v);setErr("");}} placeholder="••••••"/>
+        <Err>{err}</Err>
+        {msg&&<div style={{background:C.green+"15",border:`1px solid ${C.green}40`,borderRadius:10,padding:12,marginBottom:12,fontSize:13,color:C.green,lineHeight:1.5}}>{msg}</div>}
+        <div style={{display:"flex",gap:8}}>
+          <Btn onClick={crea} variant="ghost" disabled={busy||!email||!pass} style={{flex:1}}>Crea account</Btn>
+          <Btn onClick={entra} disabled={busy||!email||!pass} style={{flex:1}}>{busy?"…":"Entra"}</Btn>
+        </div>
+        <button onClick={scordata} disabled={busy} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:12,marginTop:14,width:"100%",fontFamily:"'DM Sans',sans-serif"}}>Password dimenticata?</button>
+      </Card>
+      <button onClick={onReset} style={{background:"none",border:"none",color:"#333",cursor:"pointer",fontSize:11,width:"100%",fontFamily:"'DM Sans',sans-serif"}}>Cambia database</button>
+    </Shell>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════
+   SCHERMATA 3 — quale gruppo
+═══════════════════════════════════════════════════════ */
+function GroupGate({sb,groups,onPick,onOut,cfg,say}){
+  const [name,setName]=useState(""), [code,setCode]=useState(""), [busy,setBusy]=useState(false), [err,setErr]=useState("");
+
+  const crea=async()=>{
+    if(!name.trim())return;
     setBusy(true);setErr("");
-    // ricontrollo prima di scrivere: mai sovrascrivere un gruppo già esistente
-    const r=await fbFetch(url);
-    if(!r.ok){setErr("Connessione persa, riprova.");setBusy(false);return;}
-    if(hasData(r.data)){
-      setErr("Su questo database ci sono già dei dati: entra invece di crearne uno nuovo.");
-      setFound(summary(r.data));setBusy(false);return;
-    }
-    if(!await fbPut(url,"adminPin",pin.trim())){
-      setErr("Scrittura non riuscita. Controlla le regole di scrittura del database.");setBusy(false);return;
-    }
-    await fbPut(url,"teamSelection",{phase:"idle",assign:{},captainSide:null});
-    setBusy(false); enter(url);
+    const{data:u}=await sb.auth.getUser();
+    const{data,error}=await sb.from('groups').insert({owner:u.user.id,name:name.trim()}).select().single();
+    setBusy(false);
+    if(error){setErr(errText(error));return;}
+    onPick(data.id);
+  };
+  const entra=async()=>{
+    const {code:c,cfg:c2}=unpackInvite(code);
+    if(!c){setErr("Incolla il codice");return;}
+    if(c2&&cfg&&c2.url!==cfg.url){setErr("Questo codice è di un altro database. Tocca 'Cambia database' e riparti da lì.");return;}
+    setBusy(true);setErr("");
+    const{data,error}=await sb.rpc('join_group',{p_code:c});
+    setBusy(false);
+    if(error){setErr(/codice non valido/i.test(error.message)?"Codice non valido":errText(error));return;}
+    say("Sei dentro");onPick(data);
   };
 
   return(
-    <div style={{minHeight:"100vh",background:C.bg,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
-      <div style={{maxWidth:480,width:"100%"}}>
-        <div style={{textAlign:"center",marginBottom:32}}>
-          <div style={{fontSize:56,marginBottom:12}}>⚽</div>
-          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:38,letterSpacing:4,color:C.text}}>CialtronApp</div>
-          <div style={{fontSize:13,color:C.muted,marginTop:4}}>Setup iniziale — solo una volta</div>
+    <Shell>
+      {groups.length>0&&(
+        <Card title="I TUOI GRUPPI">
+          {groups.map(g=>(
+            <button key={g.id} onClick={()=>onPick(g.id)} style={{width:"100%",textAlign:"left",background:C.card2,border:`1px solid ${C.border}`,borderRadius:12,padding:"13px 15px",marginBottom:8,cursor:"pointer",color:C.text,fontFamily:"'DM Sans',sans-serif",fontWeight:700,fontSize:15}}>{g.name}</button>
+          ))}
+        </Card>
+      )}
+      <Card title="CREA UN GRUPPO">
+        <Input label="COME SI CHIAMA" value={name} onChange={v=>{setName(v);setErr("");}} placeholder="Calcetto del giovedì"/>
+        <Btn onClick={crea} disabled={busy||!name.trim()} full>Crea</Btn>
+      </Card>
+      <Card title="OPPURE ENTRA CON UN CODICE">
+        <Input label="CODICE INVITO" value={code} onChange={v=>{setCode(v);setErr("");}} placeholder="a1b2c3d4"/>
+        <Btn onClick={entra} variant="dark" disabled={busy||!code.trim()} full>Entra nel gruppo</Btn>
+      </Card>
+      <Err>{err}</Err>
+      <button onClick={onOut} style={{background:"none",border:"none",color:"#444",cursor:"pointer",fontSize:11,width:"100%",fontFamily:"'DM Sans',sans-serif"}}>Esci dall'account</button>
+    </Shell>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════
+   PANNELLO — foglio scorrevole per account e gruppo
+═══════════════════════════════════════════════════════ */
+function Panel({title,onClose,children}){
+  useEffect(()=>{
+    const h=e=>{if(e.key==="Escape")onClose();};
+    window.addEventListener("keydown",h);return()=>window.removeEventListener("keydown",h);
+  },[onClose]);
+  return(
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"#000000CC",zIndex:500,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:"18px 18px 0 0",width:"100%",maxWidth:700,maxHeight:"90vh",overflowY:"auto",padding:"16px 16px calc(24px + env(safe-area-inset-bottom))"}}>
+        <div style={{width:38,height:4,borderRadius:3,background:C.card3,margin:"0 auto 16px"}}/>
+        <div style={{display:"flex",alignItems:"center",marginBottom:16}}>
+          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:24,letterSpacing:2,color:C.text,flex:1}}>{title}</div>
+          <Btn onClick={onClose} variant="ghost" small>Chiudi</Btn>
         </div>
-
-        <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:16,padding:20,marginBottom:16}}>
-          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,letterSpacing:2,color:C.accent,marginBottom:14}}>STEP 1 — IL DATABASE</div>
-          <div style={{fontSize:13,color:C.muted,lineHeight:1.8,marginBottom:12}}>
-            Se il gruppo esiste già, incolla l'URL che ti hanno passato. Altrimenti:<br/>
-            1. Vai su <strong style={{color:C.text}}>console.firebase.google.com</strong><br/>
-            2. Crea nuovo progetto (nome qualsiasi)<br/>
-            3. Nel menu sinistro: <strong style={{color:C.text}}>Realtime Database → Crea database</strong><br/>
-            4. Scegli la regione più vicina → <strong style={{color:C.text}}>Avvia in modalità test</strong><br/>
-            5. Copia l'URL che appare (es: <code style={{color:C.accent}}>https://mio-progetto-default-rtdb.firebaseio.com</code>)
-          </div>
-          <Input label="URL DATABASE FIREBASE" value={url} onChange={v=>{setUrl(v);setFound(null);setErr("");}} placeholder="https://xxx-default-rtdb.firebaseio.com"/>
-          {found===null&&<Btn onClick={probe} disabled={!url||busy} full style={{padding:"12px 0",borderRadius:10}}>{busy?"Verifico…":"Verifica database →"}</Btn>}
-        </div>
-
-        {found&&(
-          <div style={{background:C.card,border:`1px solid ${C.green}35`,borderRadius:16,padding:20,marginBottom:16}}>
-            <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,letterSpacing:2,color:C.green,marginBottom:10}}>GRUPPO TROVATO</div>
-            <div style={{fontSize:13,color:C.muted,marginBottom:14}}>
-              <strong style={{color:C.text}}>{found.players}</strong> giocatori · <strong style={{color:C.text}}>{found.matches}</strong> partite.
-              Entri come ospite: vedi tutto e partecipi alla selezione squadre. Per modificare i dati sblocca l'admin col 🔒 in alto a destra.
-            </div>
-            <Btn onClick={()=>enter(url)} full style={{padding:"14px 0",fontSize:16,borderRadius:12}}>Entra nel gruppo →</Btn>
-          </div>
-        )}
-
-        {found===false&&(
-          <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:16,padding:20,marginBottom:16}}>
-            <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,letterSpacing:2,color:C.accent,marginBottom:14}}>STEP 2 — PIN ADMIN</div>
-            <div style={{fontSize:13,color:C.muted,marginBottom:12}}>Database vuoto: stai creando un gruppo nuovo. Solo tu conoscerai questo PIN per modificare i dati; gli altri potranno visualizzare e fare la selezione squadre.</div>
-            <Input label="PIN ADMIN (min. 4 cifre)" type="password" value={pin} onChange={setPin} placeholder="es. 1234"/>
-            <Btn onClick={create} disabled={!pin||busy} full style={{padding:"14px 0",fontSize:16,borderRadius:12}}>{busy?"Creo il gruppo…":"Crea il gruppo →"}</Btn>
-          </div>
-        )}
-
-        {err&&<div style={{background:C.red+"15",border:`1px solid ${C.red}40`,borderRadius:10,padding:12,marginBottom:12,fontSize:13,color:C.red}}>{err}</div>}
-
-        <div style={{marginTop:12,fontSize:11,color:C.muted,textAlign:"center"}}>
-          Il database è gratuito. Le regole "test mode" durano 30 giorni poi vanno rinnovate dalla console Firebase → Regole → <code style={{color:C.accent}}>{`{".read":true,".write":true}`}</code>
-        </div>
+        {children}
       </div>
     </div>
   );
 }
 
+const Sub=({children})=>(
+  <div style={{fontSize:10,color:C.muted,fontWeight:800,letterSpacing:1,margin:"20px 0 8px"}}>{children}</div>
+);
+const Line=({children})=>(
+  <div style={{background:C.card2,border:`1px solid ${C.border}`,borderRadius:10,padding:"11px 13px",marginBottom:6,display:"flex",alignItems:"center",gap:10}}>{children}</div>
+);
+
 /* ═══════════════════════════════════════════════════════
-   ADMIN LOGIN MODAL
+   CHI SEI — collega l'account a un giocatore della rosa
 ═══════════════════════════════════════════════════════ */
-function AdminModal({dbUrl,onLogin,onClose}){
-  const [pin,setPin]=useState(""), [err,setErr]=useState(""), [busy,setBusy]=useState(false);
-  const submit=async()=>{
-    setBusy(true); setErr("");
-    const stored=await fbGet(dbUrl,"adminPin");
-    if(pin===String(stored)){onLogin();}
-    else{setErr("PIN errato");setBusy(false);}
+function IdentitySheet({players,mine,onPick,onNew,onClose,closable}){
+  const [sel,setSel]=useState(mine||"");
+  const [nome,setNome]=useState("");
+  const [busy,setBusy]=useState(false), [err,setErr]=useState("");
+  const conferma=async()=>{
+    setBusy(true);setErr("");
+    try{
+      if(sel==="__new__"){
+        if(!nome.trim())throw new Error("Scrivi il tuo nome");
+        await onNew(nome.trim());
+      }else{
+        if(!sel)throw new Error("Scegli chi sei");
+        await onPick(sel);
+      }
+    }catch(e){setErr(errText(e));setBusy(false);return;}
+    setBusy(false);
   };
   return(
-    <Modal onClose={onClose}>
-      <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:24,letterSpacing:2,color:C.text,marginBottom:16}}>ACCESSO ADMIN</div>
-      <Input label="PIN" type="password" value={pin} onChange={setPin} placeholder="••••" autoFocus/>
-      {err&&<div style={{fontSize:12,color:C.red,marginBottom:10}}>{err}</div>}
-      <div style={{display:"flex",gap:8}}>
-        <Btn onClick={onClose} variant="ghost" style={{flex:1}}>Annulla</Btn>
-        <Btn onClick={submit} disabled={!pin||busy} style={{flex:1}}>Accedi</Btn>
+    <Panel title="CHI SEI?" onClose={closable?onClose:()=>{}}>
+      <div style={{fontSize:13,color:C.muted,marginBottom:14,lineHeight:1.6}}>
+        Collega il tuo account a un giocatore della rosa: servirà per la selezione squadre e per gestire la tua foto.
       </div>
-    </Modal>
+      {players.map(p=>(
+        <button key={p.id} onClick={()=>setSel(p.id)} style={{width:"100%",textAlign:"left",background:sel===p.id?C.accent+"15":C.card2,border:`1px solid ${sel===p.id?C.accent:C.border}`,borderRadius:10,padding:"10px 13px",marginBottom:6,cursor:"pointer",display:"flex",alignItems:"center",gap:10}}>
+          <Avatar player={p} size={32}/>
+          <span style={{color:C.text,fontWeight:700,fontSize:14,flex:1}}>{p.name}</span>
+          {sel===p.id&&<span style={{color:C.accent,fontSize:16}}>✓</span>}
+        </button>
+      ))}
+      <button onClick={()=>setSel("__new__")} style={{width:"100%",textAlign:"left",background:sel==="__new__"?C.accent+"15":C.card2,border:`1px dashed ${sel==="__new__"?C.accent:C.border}`,borderRadius:10,padding:"10px 13px",marginBottom:6,cursor:"pointer",color:C.text,fontWeight:700,fontSize:14,fontFamily:"'DM Sans',sans-serif"}}>Non ci sono · aggiungimi</button>
+      {sel==="__new__"&&<div style={{marginTop:10}}><Input label="IL TUO NOME" value={nome} onChange={setNome} placeholder="Come ti chiami?" autoFocus/></div>}
+      <Err>{err}</Err>
+      <Btn onClick={conferma} disabled={busy} full style={{marginTop:10,padding:"13px 0"}}>{busy?"…":"Conferma"}</Btn>
+    </Panel>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════
+   ACCOUNT E GRUPPO
+═══════════════════════════════════════════════════════ */
+function AccountPanel(props){
+  const {sb,cfg,group,members,me,isAdmin,players,email,onClose,onLogout,onLeave,
+         setRole,removeMember,renameGroup,openIdentity,migrate,say}=props;
+  const [nome,setNome]=useState(group.name||"");
+  const [mig,setMig]=useState(null);          // schermata migrazione
+  const [busy,setBusy]=useState(false);
+  const codice=packInvite(group.invite_code,cfg);
+  const link=inviteLink(group.invite_code,cfg);
+  const nameOf=pid=>{const p=players.find(x=>x.id===pid);return p?p.name:null;};
+
+  const condividi=async()=>{
+    const testo=`Entra in "${group.name}" su CialtronApp:\n${link}`;
+    try{
+      if(navigator.share){await navigator.share({title:"CialtronApp",text:testo});return;}
+      await navigator.clipboard.writeText(testo);say("Invito copiato");
+    }catch(e){
+      try{await navigator.clipboard.writeText(codice);say("Codice copiato");}catch(e2){say("Copia a mano: "+group.invite_code);}
+    }
+  };
+
+  if(mig)return <MigratePanel {...props} onClose={()=>setMig(null)} migrate={migrate}/>;
+
+  return(
+    <Panel title="ACCOUNT E GRUPPO" onClose={onClose}>
+      <Sub>IL TUO ACCOUNT</Sub>
+      <Line>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontSize:14,color:C.text,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis"}}>{email}</div>
+          <div style={{fontSize:11,color:C.muted,marginTop:2}}>
+            {me&&me.player_id?<>Sei <strong style={{color:C.accent}}>{nameOf(me.player_id)||"—"}</strong> nella rosa</>:"Non hai ancora detto chi sei"}
+            {isAdmin&&<> · admin</>}
+          </div>
+        </div>
+        <Btn onClick={openIdentity} variant="ghost" small>Cambia</Btn>
+      </Line>
+      <Btn onClick={onLogout} variant="ghost" full style={{marginTop:6}}>Esci dall'account</Btn>
+
+      <Sub>INVITA I GIOCATORI</Sub>
+      <div style={{fontSize:12,color:C.muted,marginBottom:10,lineHeight:1.6}}>
+        Mandagli questo: si installano l'app, si fanno il loro account ed entrano nel gruppo senza configurare niente.
+      </div>
+      <div style={{background:C.card2,border:`1px solid ${C.border}`,borderRadius:10,padding:"12px 14px",marginBottom:8,textAlign:"center"}}>
+        <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:30,letterSpacing:6,color:C.accent}}>{group.invite_code}</div>
+        <div style={{fontSize:10,color:C.muted,letterSpacing:1}}>CODICE DEL GRUPPO</div>
+      </div>
+      <Btn onClick={condividi} full>Condividi l'invito</Btn>
+
+      <Sub>CHI C'È NEL GRUPPO ({members.length})</Sub>
+      {members.map(m=>{
+        const owner=m.user_id===group.owner;
+        return(
+          <Line key={m.user_id}>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:14,color:C.text,fontWeight:700}}>{nameOf(m.player_id)||m.member_name||"(senza nome)"}</div>
+              <div style={{fontSize:11,color:C.muted,marginTop:2}}>
+                {owner?"proprietario":m.role==="admin"?"admin":"giocatore"}
+                {m.user_id===(me&&me.user_id)&&" · tu"}
+                {!m.player_id&&" · non ha ancora detto chi è"}
+              </div>
+            </div>
+            {isAdmin&&!owner&&(
+              <>
+                <Btn onClick={()=>setRole(m.user_id,m.role==="admin"?"player":"admin")} variant="ghost" small>
+                  {m.role==="admin"?"↓ giocatore":"↑ admin"}
+                </Btn>
+                {m.user_id!==(me&&me.user_id)&&<Btn onClick={()=>removeMember(m.user_id)} variant="danger" small>✕</Btn>}
+              </>
+            )}
+          </Line>
+        );
+      })}
+
+      {isAdmin&&(
+        <>
+          <Sub>IL GRUPPO</Sub>
+          <Input label="NOME DEL GRUPPO" value={nome} onChange={setNome}/>
+          <Btn onClick={async()=>{setBusy(true);await renameGroup(nome.trim());setBusy(false);}} disabled={busy||!nome.trim()||nome.trim()===group.name} variant="dark" full>Salva il nome</Btn>
+          <Btn onClick={()=>setMig(true)} variant="ghost" full style={{marginTop:8}}>Importa dal vecchio database Firebase</Btn>
+        </>
+      )}
+
+      <Sub>ALTRO</Sub>
+      <Btn onClick={onLeave} variant="danger" full>Esci da questo gruppo</Btn>
+      <div style={{textAlign:"center",fontSize:10,color:"#3A3A3A",marginTop:20,letterSpacing:1}}>v{APP_VERSION}</div>
+    </Panel>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════
+   MIGRAZIONE — porta dentro rosa, partite e foto da Firebase
+═══════════════════════════════════════════════════════ */
+function MigratePanel({onClose,migrate,players}){
+  const [url,setUrl]=useState(()=>localStorage.getItem("cia-db-url")||"");
+  const [scan,setScan]=useState(null), [busy,setBusy]=useState(false), [err,setErr]=useState(""), [done,setDone]=useState(null);
+
+  const guarda=async()=>{
+    setBusy(true);setErr("");setScan(null);
+    const u=url.trim().replace(/\/+$/,"");
+    const [pl,mt,ph]=await Promise.all([fbFetch(u,"players"),fbFetch(u,"matches"),fbFetch(u,"photos")]);
+    setBusy(false);
+    if(!pl.ok){setErr("Non riesco a leggere quel database. Controlla l'indirizzo e che le regole permettano la lettura.");return;}
+    const P=(Array.isArray(pl.data)?pl.data:[]).filter(Boolean);
+    const M=(Array.isArray(mt.data)?mt.data:[]).filter(Boolean);
+    const F=ph.data||{};
+    const conFoto=P.filter(p=>F[p.id]||p.photo).length;
+    if(!P.length&&!M.length){setErr("Quel database è vuoto: non c'è niente da importare.");return;}
+    setScan({url:u,players:P,matches:M,photos:F,conFoto});
+  };
+
+  const vai=async()=>{
+    setBusy(true);setErr("");
+    try{ const r=await migrate(scan); setDone(r); }
+    catch(e){ setErr(errText(e)); }
+    setBusy(false);
+  };
+
+  if(done)return(
+    <Panel title="IMPORTATO" onClose={onClose}>
+      <div style={{textAlign:"center",padding:"20px 0"}}>
+        <div style={{fontSize:44,marginBottom:12}}>✅</div>
+        <div style={{fontSize:14,color:C.text,lineHeight:1.7}}>
+          <strong style={{color:C.accent}}>{done.players}</strong> giocatori, <strong style={{color:C.accent}}>{done.matches}</strong> partite
+          {done.photos>0&&<> e <strong style={{color:C.accent}}>{done.photos}</strong> foto</> } sono nel gruppo.
+        </div>
+      </div>
+      <Btn onClick={onClose} full>Chiudi</Btn>
+    </Panel>
+  );
+
+  return(
+    <Panel title="IMPORTA DA FIREBASE" onClose={onClose}>
+      <div style={{fontSize:13,color:C.muted,marginBottom:14,lineHeight:1.6}}>
+        Legge rosa, partite e foto dal database che l'app usava prima e li porta dentro questo gruppo. Il vecchio database non viene toccato.
+      </div>
+      <Input label="INDIRIZZO DEL VECCHIO DATABASE" value={url} onChange={v=>{setUrl(v);setScan(null);setErr("");}} placeholder="https://xxx-default-rtdb.firebaseio.com"/>
+      <Err>{err}</Err>
+      {!scan
+        ?<Btn onClick={guarda} disabled={busy||!url.trim()} full>{busy?"Leggo…":"Guarda cosa c'è dentro"}</Btn>
+        :<>
+          <div style={{background:C.card2,border:`1px solid ${C.border}`,borderRadius:10,padding:14,marginBottom:12}}>
+            <div style={{fontSize:13,color:C.text,lineHeight:1.8}}>
+              Trovati <strong style={{color:C.accent}}>{scan.players.length}</strong> giocatori,
+              {" "}<strong style={{color:C.accent}}>{scan.matches.length}</strong> partite,
+              {" "}<strong style={{color:C.accent}}>{scan.conFoto}</strong> foto.
+            </div>
+            {players.length>0&&<div style={{fontSize:12,color:C.red,marginTop:8,lineHeight:1.5}}>Attenzione: la rosa di questo gruppo verrà sostituita da quella importata.</div>}
+          </div>
+          <Btn onClick={vai} disabled={busy} full>{busy?"Importo…":"Importa"}</Btn>
+        </>
+      }
+      <Btn onClick={onClose} variant="ghost" full style={{marginTop:8}}>Annulla</Btn>
+    </Panel>
   );
 }
 
@@ -642,9 +966,9 @@ function MatchSection({players,matches,isAdmin,saveMatches}){
 }
 
 /* ═══════════════════════════════════════════════════════
-   SELEZIONE SQUADRE — real-time per tutti
+   SELEZIONE SQUADRE — in tempo reale, ognuno al suo turno
 ═══════════════════════════════════════════════════════ */
-function TeamsSection({standings,dbUrl,teamSel,reload}){
+function TeamsSection({standings,teamSel,setSel,myPlayerId,isAdmin}){
   const hasCap=standings.length>=2;
   const captain=hasCap?standings[0]:null;
   const picker=hasCap?standings[standings.length-1]:null;
@@ -654,27 +978,35 @@ function TeamsSection({standings,dbUrl,teamSel,reload}){
   const assign=teamSel?.assign||{};
   const captainSide=teamSel?.captainSide||null;
 
+  /* Con gli account si sa chi sta guardando: tocca al picker formare le squadre
+     e al capitano scegliere il lato. L'admin può sempre sbloccare la situazione
+     (qualcuno ha il telefono scarico, non è ancora entrato…). */
+  const ioPicker=!!picker&&(myPlayerId===picker.id||isAdmin);
+  const ioCapitano=!!captain&&(myPlayerId===captain.id||isAdmin);
   const canSend=standings.length<=2||others.every(p=>assign[p.id]==="white"||assign[p.id]==="black");
 
-  const updateSel=async patch=>{
-    await fbPatch(dbUrl,"teamSelection",patch); reload();
-  };
-  const toggleAssign=async(id,side)=>{
-    const newAssign={...assign,[id]:assign[id]===side?null:side};
-    await updateSel({assign:newAssign});
-  };
-  const startPicking=async()=>await updateSel({phase:"picking",assign:{},captainSide:null});
-  const sendProposal=async()=>await updateSel({phase:"captain"});
-  const captainPick=async side=>{
+  const toggleAssign=(id,side)=>setSel({assign:{...assign,[id]:assign[id]===side?null:side}});
+  const startPicking=()=>setSel({phase:"picking",assign:{},captainSide:null,finalWhite:null,finalBlack:null});
+  const sendProposal=()=>setSel({phase:"captain"});
+  const captainPick=side=>{
     const wBase=side==="white"?[captain]:[picker];
     const bBase=side==="black"?[captain]:[picker];
-    const finalW=[...wBase,...others.filter(p=>assign[p.id]==="white")].map(p=>p.id);
-    const finalB=[...bBase,...others.filter(p=>assign[p.id]==="black")].map(p=>p.id);
-    await updateSel({phase:"done",captainSide:side,finalWhite:finalW,finalBlack:finalB});
+    setSel({phase:"done",captainSide:side,
+      finalWhite:[...wBase,...others.filter(p=>assign[p.id]==="white")].map(p=>p.id),
+      finalBlack:[...bBase,...others.filter(p=>assign[p.id]==="black")].map(p=>p.id)});
   };
-  const reset=async()=>await updateSel({phase:"idle",assign:{},captainSide:null,finalWhite:null,finalBlack:null});
-
+  const reset=()=>setSel({phase:"idle",assign:{},captainSide:null,finalWhite:null,finalBlack:null});
   const getById=id=>standings.find(p=>p.id===id);
+
+  const Attesa=({chi,cosa,colore})=>(
+    <div style={{background:colore+"12",border:`1px solid ${colore}30`,borderRadius:12,padding:"12px 14px",marginBottom:16,display:"flex",alignItems:"center",gap:10}}>
+      <Avatar player={chi} size={32}/>
+      <div style={{fontSize:13,color:C.text,lineHeight:1.5}}>
+        <strong style={{color:colore}}>{chi.name}</strong> {cosa}
+        <div style={{fontSize:11,color:C.muted}}>Lo vedi aggiornarsi qui, in diretta</div>
+      </div>
+    </div>
+  );
 
   return(
     <div>
@@ -684,31 +1016,34 @@ function TeamsSection({standings,dbUrl,teamSel,reload}){
       phase==="idle"?(
         <>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:20}}>
-            {[{player:captain,role:"🏆 CAPITANO",desc:"Sceglie la squadra",color:C.accent},{player:picker,role:"🛡️ PICKER",desc:"Decide le squadre",color:C.red}].map(({player,role,desc,color})=>(
+            {[{player:captain,role:"🏆 CAPITANO",desc:"Sceglie la squadra",color:C.accent},
+              {player:picker,role:"🛡️ PICKER",desc:"Decide le squadre",color:C.red}].map(({player,role,desc,color})=>(
               <div key={player.id} style={{background:color+"0D",border:`1px solid ${color}25`,borderRadius:14,padding:16,textAlign:"center"}}>
                 <div style={{fontSize:10,color:C.muted,letterSpacing:1,marginBottom:10}}>{role}</div>
                 <Avatar player={player} size={56}/>
-                <div style={{fontWeight:800,color,marginTop:10,fontSize:15}}>{player.name}</div>
+                <div style={{fontWeight:800,color,marginTop:10,fontSize:15}}>{player.name}{myPlayerId===player.id?" (tu)":""}</div>
                 <div style={{fontSize:11,color:C.muted,marginTop:4}}>{desc}</div>
                 <div style={{fontSize:11,color:C.muted}}>Media: {player.stats?.avg?.toFixed(2)||"0.00"}</div>
               </div>
             ))}
           </div>
-          <Btn onClick={startPicking} full style={{padding:"14px 0",fontSize:15,borderRadius:10}}>{picker.name} inizia a formare le squadre →</Btn>
+          {ioPicker
+            ?<Btn onClick={startPicking} full style={{padding:"14px 0",fontSize:15,borderRadius:10}}>Forma le squadre →</Btn>
+            :<div style={{textAlign:"center",fontSize:13,color:C.muted,lineHeight:1.6,padding:"6px 10px"}}>
+               Tocca a <strong style={{color:C.red}}>{picker.name}</strong> far partire la selezione.<br/>
+               <span style={{fontSize:11}}>Quando lo fa, lo vedi comparire qui da solo.</span>
+             </div>}
         </>
       ):
 
       phase==="picking"?(
         <>
-          <div style={{background:C.red+"15",border:`1px solid ${C.red}30`,borderRadius:12,padding:"10px 14px",marginBottom:16,display:"flex",alignItems:"center",gap:10}}>
-            <Avatar player={picker} size={30}/>
-            <div style={{fontSize:13,color:C.text}}><strong style={{color:C.red}}>{picker.name}</strong> sta formando le squadre…<br/><span style={{fontSize:11,color:C.muted}}>Le scelte sono visibili a tutti in tempo reale</span></div>
-          </div>
+          {!ioPicker&&<Attesa chi={picker} cosa="sta formando le squadre…" colore={C.red}/>}
+          {ioPicker&&<div style={{fontSize:12,color:C.muted,marginBottom:14}}>Assegna gli altri giocatori. Capitano e picker si dividono dopo, quando il capitano sceglie il lato.</div>}
           {[captain,picker].map((fixed,fi)=>(
             <div key={fixed.id} style={{display:"flex",alignItems:"center",gap:10,background:C.card2,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 14px",marginBottom:8,opacity:.5}}>
               <Avatar player={fixed} size={34}/><span style={{flex:1,fontWeight:600,fontSize:14,color:C.text}}>{fixed.name}</span>
               <Tag color={fi===0?C.accent:C.red}>{fi===0?"CAPITANO":"PICKER"}</Tag>
-              <span style={{fontSize:11,color:C.muted}}>scelto al prossimo step</span>
             </div>
           ))}
           {others.length>0&&<div style={{height:1,background:C.border,margin:"14px 0 12px"}}/>}
@@ -718,44 +1053,55 @@ function TeamsSection({standings,dbUrl,teamSel,reload}){
               <div key={p.id} style={{display:"flex",alignItems:"center",gap:10,background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 14px",marginBottom:8}}>
                 <Avatar player={p} size={34}/><span style={{flex:1,fontWeight:600,fontSize:14,color:C.text}}>{p.name}</span>
                 <div style={{display:"flex",gap:6}}>
-                  {["white","black"].map(t=><button key={t} onClick={()=>toggleAssign(p.id,t)} style={{padding:"6px 14px",borderRadius:6,cursor:"pointer",fontWeight:700,fontSize:14,fontFamily:"'DM Sans',sans-serif",border:`2px solid ${side===t?C.accent:C.border}`,background:side===t?(t==="white"?"#ffffff18":"#33333344"):C.card2,color:side===t?C.accent:C.muted,transition:"all .15s"}}>{t==="white"?"⬜":"⬛"}</button>)}
+                  {["white","black"].map(t=>(
+                    <button key={t} disabled={!ioPicker} onClick={()=>ioPicker&&toggleAssign(p.id,t)}
+                      style={{padding:"6px 14px",borderRadius:6,cursor:ioPicker?"pointer":"default",fontWeight:700,fontSize:14,fontFamily:"'DM Sans',sans-serif",border:`2px solid ${side===t?C.accent:C.border}`,background:side===t?(t==="white"?"#ffffff18":"#33333344"):C.card2,color:side===t?C.accent:C.muted,opacity:ioPicker||side===t?1:.45,transition:"all .15s"}}>
+                      {t==="white"?"⬜":"⬛"}
+                    </button>
+                  ))}
                 </div>
               </div>
             );
           })}
-          {standings.length<=2&&<div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:12,marginBottom:12,fontSize:13,color:C.muted,textAlign:"center"}}>Solo 2 giocatori — il capitano sceglierà il lato</div>}
-          <div style={{display:"flex",gap:8,marginTop:12}}>
-            <Btn onClick={reset} variant="ghost" style={{flex:1}}>Annulla</Btn>
-            <Btn onClick={sendProposal} disabled={!canSend} style={{flex:2}}>Invia proposta a {captain.name} →</Btn>
-          </div>
+          {ioPicker&&(
+            <div style={{display:"flex",gap:8,marginTop:12}}>
+              <Btn onClick={reset} variant="ghost" style={{flex:1}}>Annulla</Btn>
+              <Btn onClick={sendProposal} disabled={!canSend} style={{flex:2}}>Invia a {captain.name} →</Btn>
+            </div>
+          )}
         </>
       ):
 
       phase==="captain"?(
         <>
-          <div style={{background:C.accent+"15",border:`1px solid ${C.accent}30`,borderRadius:12,padding:"10px 14px",marginBottom:16,display:"flex",alignItems:"center",gap:10}}>
-            <Avatar player={captain} size={30}/>
-            <div style={{fontSize:13,color:C.text}}><strong style={{color:C.accent}}>{captain.name}</strong>, scegli con quale squadra giocare<br/><span style={{fontSize:11,color:C.muted}}>Proposta ricevuta da {picker.name}</span></div>
-          </div>
+          {ioCapitano
+            ?<div style={{background:C.accent+"15",border:`1px solid ${C.accent}30`,borderRadius:12,padding:"12px 14px",marginBottom:16,fontSize:13,color:C.text,lineHeight:1.5}}>
+               <strong style={{color:C.accent}}>Tocca a te</strong>: scegli con quale squadra giocare.
+               <div style={{fontSize:11,color:C.muted}}>Proposta di {picker.name}</div>
+             </div>
+            :<Attesa chi={captain} cosa="sta scegliendo la squadra…" colore={C.accent}/>}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
             {["white","black"].map(t=>{
               const teamOthers=others.filter(p=>assign[p.id]===t);
-              const opp=t==="white"?`${picker.name} nei NERI`:`${picker.name} nei BIANCHI`;
               return(
                 <div key={t} style={{background:C.card2,border:`1px solid ${C.border}`,borderRadius:12,padding:14}}>
                   <div style={{fontWeight:800,marginBottom:10,fontSize:14,color:C.text}}>{t==="white"?"⬜ BIANCHI":"⬛ NERI"}</div>
                   {teamOthers.map(p=><div key={p.id} style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}><Avatar player={p} size={22}/><span style={{fontSize:12,color:C.text}}>{p.name}</span></div>)}
                   <div style={{borderTop:`1px solid ${C.border}`,marginTop:8,paddingTop:8}}>
-                    <div style={{fontSize:11,color:C.accent,fontStyle:"italic"}}>+ {captain.name} (tu)</div>
-                    <div style={{fontSize:11,color:C.muted,fontStyle:"italic"}}>— {opp}</div>
+                    <div style={{fontSize:11,color:C.accent,fontStyle:"italic"}}>+ {captain.name}</div>
+                    <div style={{fontSize:11,color:C.muted,fontStyle:"italic"}}>— {picker.name} dall'altra parte</div>
                   </div>
                 </div>
               );
             })}
           </div>
-          <div style={{display:"flex",gap:8}}>
-            {["white","black"].map(t=><button key={t} onClick={()=>captainPick(t)} style={{flex:1,padding:"14px 0",border:`2px solid ${C.border}`,background:C.card2,borderRadius:10,cursor:"pointer",color:C.text,fontWeight:800,fontSize:15,fontFamily:"'DM Sans',sans-serif"}}>{t==="white"?"⬜ BIANCHI":"⬛ NERI"}</button>)}
-          </div>
+          {ioCapitano&&(
+            <div style={{display:"flex",gap:8}}>
+              {["white","black"].map(t=>(
+                <button key={t} onClick={()=>captainPick(t)} style={{flex:1,padding:"14px 0",border:`2px solid ${C.border}`,background:C.card2,borderRadius:10,cursor:"pointer",color:C.text,fontWeight:800,fontSize:15,fontFamily:"'DM Sans',sans-serif"}}>{t==="white"?"⬜ BIANCHI":"⬛ NERI"}</button>
+              ))}
+            </div>
+          )}
         </>
       ):
 
@@ -769,11 +1115,15 @@ function TeamsSection({standings,dbUrl,teamSel,reload}){
             {[{side:"white",ids:teamSel.finalWhite||[],label:"⬜ BIANCHI"},{side:"black",ids:teamSel.finalBlack||[],label:"⬛ NERI"}].map(({side,ids,label})=>(
               <div key={side} style={{background:captainSide===side?C.accent+"12":C.card2,border:`2px solid ${captainSide===side?C.accent:C.border}`,borderRadius:14,padding:14}}>
                 <div style={{fontWeight:800,marginBottom:12,fontSize:14,color:captainSide===side?C.accent:C.text}}>{label}</div>
-                {ids.map(id=>{const p=getById(id);return p?<div key={id} style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}><Avatar player={p} size={30}/><span style={{fontSize:13,color:C.text,fontWeight:p.id===captain.id?800:400}}>{p.name}{p.id===captain.id?" ★":""}</span></div>:null;})}
+                {ids.map(id=>{const p=getById(id);return p?(
+                  <div key={id} style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                    <Avatar player={p} size={30}/>
+                    <span style={{fontSize:13,color:myPlayerId===id?C.accent:C.text,fontWeight:p.id===captain.id||myPlayerId===id?800:400}}>{p.name}{p.id===captain.id?" ★":""}</span>
+                  </div>):null;})}
               </div>
             ))}
           </div>
-          <Btn onClick={reset} variant="ghost" full>Nuova selezione</Btn>
+          {(ioPicker||ioCapitano)&&<Btn onClick={reset} variant="ghost" full>Nuova selezione</Btn>}
         </>
       ):null}
     </div>
@@ -783,7 +1133,10 @@ function TeamsSection({standings,dbUrl,teamSel,reload}){
 /* ═══════════════════════════════════════════════════════
    ROSA (solo admin può modificare) + IMPORT EXCEL
 ═══════════════════════════════════════════════════════ */
-function PlayersSection({players,matches,isAdmin,updatePlayers,setPhoto,removePlayer}){
+function PlayersSection({players,matches,isAdmin,myPlayerId,updatePlayers,setPhoto,removePlayer}){
+  /* ognuno cura la propria scheda: foto e nome del giocatore che ha dichiarato
+     di essere; il resto della rosa resta agli admin */
+  const canEdit=p=>isAdmin||p.id===myPlayerId;
   const [showAdd,setShowAdd]=useState(false), [newName,setNewName]=useState(""), [newPhoto,setNewPhoto]=useState(null);
   const [editId,setEditId]=useState(null), [editName,setEditName]=useState("");
   const [busy,setBusy]=useState(false), [delP,setDelP]=useState(null);
@@ -845,7 +1198,7 @@ function PlayersSection({players,matches,isAdmin,updatePlayers,setPhoto,removePl
 
   return(
     <div>
-      <Banner title="ROSA" sub={isAdmin?"Gestisci l'anagrafica dei giocatori":"Anagrafica giocatori"}/>
+      <Banner title="ROSA" sub={isAdmin?"Gestisci l'anagrafica dei giocatori":myPlayerId?"La tua scheda la modifichi tu":"Anagrafica giocatori"}/>
       {isAdmin&&(
         <>
           <div style={{display:"flex",gap:8,marginBottom:14}}>
@@ -874,10 +1227,10 @@ function PlayersSection({players,matches,isAdmin,updatePlayers,setPhoto,removePl
         (players||[]).map(p=>{
           const s=computeStats(p,matches), isEd=editId===p.id;
           return(
-            <div key={p.id} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:16,marginBottom:10}}>
+            <div key={p.id} style={{background:C.card,border:`1px solid ${p.id===myPlayerId?C.accent+"40":C.border}`,borderRadius:14,padding:16,marginBottom:10}}>
               <div style={{display:"flex",gap:14,alignItems:"center"}}>
                 <div style={{position:"relative",flexShrink:0}}>
-                  {isAdmin?(
+                  {canEdit(p)?(
                     <>
                       <label htmlFor={`ph-${p.id}`} style={{cursor:"pointer",display:"block"}}>
                         <Avatar player={p} size={58}/>
@@ -888,17 +1241,17 @@ function PlayersSection({players,matches,isAdmin,updatePlayers,setPhoto,removePl
                   ):<Avatar player={p} size={58}/>}
                 </div>
                 <div style={{flex:1,minWidth:0}}>
-                  {isAdmin&&isEd
+                  {canEdit(p)&&isEd
                     ?<input value={editName} onChange={e=>setEditName(e.target.value)} autoFocus onKeyDown={e=>e.key==="Enter"&&rename(p.id,editName)} style={{width:"100%",background:C.card2,border:`1px solid ${C.accent}`,color:C.text,borderRadius:6,padding:"7px 10px",fontSize:15,fontFamily:"'DM Sans',sans-serif",fontWeight:700}}/>
-                    :<div style={{fontWeight:800,fontSize:16,color:C.text}}>{p.name}</div>
+                    :<div style={{fontWeight:800,fontSize:16,color:C.text}}>{p.name}{p.id===myPlayerId&&<span style={{fontSize:10,color:C.accent,fontWeight:800,marginLeft:6,letterSpacing:1}}>SEI TU</span>}</div>
                   }
                   <div style={{fontSize:12,color:C.muted,marginTop:3}}>Media: <span style={{color:C.accent,fontWeight:700}}>{s.avg.toFixed(2)}</span> · {s.presences} presenze</div>
                 </div>
-                {isAdmin&&(
+                {canEdit(p)&&(
                   <div style={{display:"flex",gap:6,flexShrink:0}}>
                     {isEd?<Btn onClick={()=>rename(p.id,editName)} small>✓</Btn>
                       :<button onClick={()=>{setEditId(p.id);setEditName(p.name);}} style={{background:"none",border:`1px solid ${C.border}`,color:C.muted,borderRadius:6,padding:"6px 10px",cursor:"pointer",fontSize:14}}>✏️</button>}
-                    <button onClick={()=>setDelP(p)} style={{background:"none",border:`1px solid ${C.red}30`,color:C.red,borderRadius:6,padding:"6px 10px",cursor:"pointer",fontSize:14}}>🗑️</button>
+                    {isAdmin&&<button onClick={()=>setDelP(p)} style={{background:"none",border:`1px solid ${C.red}30`,color:C.red,borderRadius:6,padding:"6px 10px",cursor:"pointer",fontSize:14}}>🗑️</button>}
                   </div>
                 )}
               </div>
@@ -963,146 +1316,284 @@ const NAV=[
   {id:"teams",icon:"🛡️",label:"SQUADRE"},
   {id:"players",icon:"👥",label:"ROSA"},
 ];
+const nowIso=()=>new Date().toISOString();
+
+/* Se l'app è stata aperta da un link d'invito, il codice sta nel cancelletto. */
+function inviteFromUrl(){
+  const m=(location.hash||"").match(/[#&]join=([^&]+)/);
+  if(!m)return null;
+  try{return decodeURIComponent(m[1]);}catch(e){return m[1];}
+}
 
 function CialtronApp(){
-  const [dbUrl,setDbUrl]=useState(()=>localStorage.getItem("cia-db-url")||"");
-  const [tab,setTab]=useState("standings");
-  const [players,setPlayers]=useState([]);     // grezzi, senza foto
-  const [matches,setMatches]=useState([]);
+  const [cfg,setCfg]=useState(loadCfg);
+  const [sb,setSb]=useState(()=>makeClient(loadCfg()));
+  const [session,setSession]=useState(null);
+  const [booting,setBooting]=useState(true);
+  const [groups,setGroups]=useState([]);
+  const [groupId,setGroupId]=useState(()=>localStorage.getItem(GROUP_KEY)||null);
+  const [group,setGroup]=useState(null);
+  const [members,setMembers]=useState([]);
   const [teamSel,setTeamSel]=useState(null);
-  const [photoCache,setPhotoCache]=useState(readPhotoCache);
-  const [isAdmin,setIsAdmin]=useState(false);
-  const [showAdmin,setShowAdmin]=useState(false);
-  const [conn,setConn]=useState(false);
+  const [photoCache,setPhotoCache]=useState({});
+  const [tab,setTab]=useState("standings");
+  const [panel,setPanel]=useState(null);
+  const [toast,setToast]=useState("");
+  const [live,setLive]=useState(false);
+  const [invite,setInvite]=useState(inviteFromUrl);
   const update=useUpdateCheck();
-  const pollRef=useRef(null), playersRef=useRef([]), migrRef=useRef(false);
-  playersRef.current=players;
 
-  /* legge i tre nodi che servono: il nodo photos resta fuori dal polling */
-  const reload=useCallback(async()=>{
-    if(!dbUrl)return;
-    const [pl,mt,ts]=await Promise.all([
-      fbFetch(dbUrl,"players"),fbFetch(dbUrl,"matches"),fbFetch(dbUrl,"teamSelection")]);
-    if(!pl.ok){setConn(false);return;}
-    setConn(true);
-    setPlayers(Array.isArray(pl.data)?pl.data.filter(Boolean):[]);
-    setMatches(Array.isArray(mt.data)?mt.data.filter(Boolean):[]);
-    setTeamSel(ts.data||{phase:"idle",assign:{},captainSide:null});
-  },[dbUrl]);
+  const uid=session?session.user.id:null;
+  const email=session?session.user.email:"";
+  const groupRef=useRef(null); groupRef.current=group;
+  const selRef=useRef(null);   selRef.current=teamSel;
+  const say=useCallback(m=>{setToast(m);setTimeout(()=>setToast(t=>t===m?"":t),2600);},[]);
+
+  useEffect(()=>{const s=document.getElementById("splash");if(s)s.style.display="none";},[]);
+
+  /* ─── sessione ─── */
+  useEffect(()=>{
+    if(!sb){setBooting(false);return;}
+    let dead=false;
+    sb.auth.getSession().then(({data})=>{
+      if(dead)return;
+      setSession(data.session||null);setBooting(false);
+    }).catch(()=>setBooting(false));
+    const{data:sub}=sb.auth.onAuthStateChange((_e,s)=>{setSession(s||null);setBooting(false);});
+    return()=>{dead=true;try{sub.subscription.unsubscribe();}catch(e){}};
+  },[sb]);
+
+  /* ─── i miei gruppi (+ invito in sospeso) ─── */
+  const loadGroups=useCallback(async()=>{
+    if(!sb||!uid)return[];
+    const{data,error}=await sb.from('groups').select('*').order('created_at');
+    if(error){say(errText(error));return[];}
+    setGroups(data||[]);
+    return data||[];
+  },[sb,uid,say]);
 
   useEffect(()=>{
-    const sp=document.getElementById("splash");
-    if(!dbUrl){if(sp)sp.style.display="none";return;}
-    reload().then(()=>{if(sp)sp.style.display="none";});
-    pollRef.current=setInterval(reload,3000);   // abbastanza veloce per la selezione squadre
-    return()=>clearInterval(pollRef.current);
-  },[dbUrl,reload]);
-
-  /* tutte le scritture su players passano di qui: il payload nasce sempre
-     dai dati grezzi, mai dagli oggetti arricchiti per la vista */
-  const updatePlayers=useCallback(async fn=>{
-    const next=fn(playersRef.current.map(p=>({...p})));
-    const ok=await fbPut(dbUrl,"players",next);
-    if(ok){playersRef.current=next;setPlayers(next);}
-    reload();
-    return ok;
-  },[dbUrl,reload]);
-
-  const saveMatches=useCallback(async next=>{
-    const ok=await fbPut(dbUrl,"matches",next);
-    if(ok)setMatches(next);
-    reload();
-    return ok;
-  },[dbUrl,reload]);
-
-  /* foto: base64 su photos/<id>, in players solo photoRev */
-  const setPhoto=useCallback(async(id,src)=>{
-    const b64=!src?null:(typeof src==="string"?src:await resizePhoto(src));
-    if(src&&!b64)return false;
-    if(!await fbPut(dbUrl,"photos/"+id,b64))return false;
-    const rev=Date.now();
-    await updatePlayers(list=>list.map(p=>p.id===id?{...p,photo:null,photoRev:rev}:p));
-    writePhotoCache(id,b64,rev);
-    setPhotoCache(c=>({...c,[id]:b64||undefined}));
-    return true;
-  },[dbUrl,updatePlayers]);
-
-  const removePlayer=useCallback(async id=>{
-    await fbDel(dbUrl,"photos/"+id);
-    dropPhotoCache(id);
-    setPhotoCache(c=>{const n={...c};delete n[id];return n;});
-    return updatePlayers(list=>list.filter(p=>p.id!==id));
-  },[dbUrl,updatePlayers]);
-
-  /* scarica una foto solo quando il suo photoRev è cambiato */
-  const photoSig=useMemo(()=>players.map(p=>p.id+":"+(p.photoRev||0)).join("|"),[players]);
-  useEffect(()=>{
-    if(!dbUrl)return; let dead=false;
+    if(!sb||!uid)return;
+    let dead=false;
     (async()=>{
-      for(const p of playersRef.current){
-        if(!p.photoRev)continue;
-        const rev=String(p.photoRev);
-        if(localStorage.getItem(PH_REV(p.id))===rev)continue;
-        const r=await fbFetch(dbUrl,"photos/"+p.id);
+      let list=await loadGroups();
+      if(dead)return;
+      if(invite){
+        const{code}=unpackInvite(invite);
+        const{data,error}=await sb.rpc('join_group',{p_code:code});
         if(dead)return;
-        if(!r.ok)continue;
-        writePhotoCache(p.id,r.data,rev);
-        setPhotoCache(c=>({...c,[p.id]:r.data||undefined}));
+        setInvite(null);
+        try{history.replaceState(null,"",location.pathname+location.search);}catch(e){}
+        if(error)say(/codice non valido/i.test(error.message)?"Codice invito non valido":errText(error));
+        else{list=await loadGroups();setGroupId(data);say("Sei dentro il gruppo");return;}
       }
+      const saved=localStorage.getItem(GROUP_KEY);
+      if(saved&&list.some(g=>g.id===saved))setGroupId(saved);
+      else if(list.length===1)setGroupId(list[0].id);
+      else if(saved)setGroupId(null);
     })();
     return()=>{dead=true;};
-  },[dbUrl,photoSig]);
+  },[sb,uid,invite,loadGroups,say]);
 
-  /* migrazione una tantum (la fa l'admin): foto fuori da players,
-     vecchi overrides tradotti in base mantenendo i totali già a schermo */
   useEffect(()=>{
-    if(!isAdmin||!dbUrl||migrRef.current)return;
-    const oldPhoto=players.filter(p=>p.photo&&!p.photoRev);
-    const oldOver=players.filter(p=>p.overrides&&Object.keys(p.overrides).length&&!p.base);
-    if(!oldPhoto.length&&!oldOver.length)return;
-    migrRef.current=true;
-    (async()=>{
-      const rev=Date.now();
-      for(const p of oldPhoto){
-        if(await fbPut(dbUrl,"photos/"+p.id,p.photo)){
-          writePhotoCache(p.id,p.photo,rev);
-          setPhotoCache(c=>({...c,[p.id]:p.photo}));
-        }
-      }
-      await updatePlayers(list=>list.map(p=>{
-        const n={...p};
-        if(n.photo&&!n.photoRev){n.photoRev=rev;n.photo=null;}
-        if(n.overrides&&!n.base){
-          const auto=computeStats({...n,base:null},matches).auto;
-          const totals={};
-          for(const f of FIELDS) totals[f]=n.overrides[f]??auto[f];
-          n.base=baseFromTotals(totals,auto);
-          n.overrides=null;
-        }
-        return n;
-      }));
-      migrRef.current=false;
-    })();
-  },[isAdmin,dbUrl,photoSig,players,matches,updatePlayers]);
+    if(groupId)localStorage.setItem(GROUP_KEY,groupId);else localStorage.removeItem(GROUP_KEY);
+  },[groupId]);
 
-  const playersView=useMemo(()=>players.map(p=>({...p,photo:photoCache[p.id]||p.photo||null})),[players,photoCache]);
+  /* ─── il gruppo scelto ─── */
+  const loadGroup=useCallback(async()=>{
+    if(!sb||!groupId)return;
+    const[g,m,s]=await Promise.all([
+      sb.from('groups').select('*').eq('id',groupId).maybeSingle(),
+      sb.from('group_members').select('*').eq('group_id',groupId),
+      sb.from('selections').select('*').eq('group_id',groupId).maybeSingle(),
+    ]);
+    if(g.error||!g.data){setGroup(null);setGroupId(null);return;}
+    setGroup(g.data);
+    setMembers(m.data||[]);
+    if(s.data)setTeamSel(s.data.state||{phase:"idle",assign:{}});
+    else{
+      const{data:ins}=await sb.from('selections').insert({group_id:groupId}).select().maybeSingle();
+      setTeamSel((ins&&ins.state)||{phase:"idle",assign:{}});
+    }
+  },[sb,groupId]);
+
+  useEffect(()=>{
+    if(!sb||!groupId||!uid)return;
+    setPhotoCache(readPhotoCache(groupId));
+    loadGroup();
+    const ch=sb.channel('grp-'+groupId)
+      .on('postgres_changes',{event:'*',schema:'public',table:'groups',filter:'id=eq.'+groupId},
+          p=>{if(p.new&&p.new.id)setGroup(g=>Object.assign({},g,p.new));})
+      .on('postgres_changes',{event:'*',schema:'public',table:'selections',filter:'group_id=eq.'+groupId},
+          p=>{if(p.new&&p.new.state)setTeamSel(p.new.state);})
+      .on('postgres_changes',{event:'*',schema:'public',table:'group_members',filter:'group_id=eq.'+groupId},
+          ()=>{sb.from('group_members').select('*').eq('group_id',groupId).then(({data})=>setMembers(data||[]));})
+      .subscribe(st=>setLive(st==="SUBSCRIBED"));
+    /* Rete di sicurezza: se il tempo reale non è attivo sul progetto, o cade,
+       si continua comunque a vedere le novità — solo un po' più tardi. */
+    const poll=setInterval(loadGroup,20000);
+    const onVis=()=>{if(document.visibilityState==="visible")loadGroup();};
+    document.addEventListener("visibilitychange",onVis);
+    return()=>{clearInterval(poll);document.removeEventListener("visibilitychange",onVis);try{sb.removeChannel(ch);}catch(e){}};
+  },[sb,groupId,uid,loadGroup]);
+
+  /* ─── dati derivati ─── */
+  const data=(group&&group.data)||{};
+  const players=useMemo(()=>Array.isArray(data.players)?data.players.filter(Boolean):[],[data.players]);
+  const matches=useMemo(()=>Array.isArray(data.matches)?data.matches.filter(Boolean):[],[data.matches]);
+  const playersRef=useRef([]); playersRef.current=players;
+  const me=useMemo(()=>members.find(m=>m.user_id===uid)||null,[members,uid]);
+  const isAdmin=!!(me&&me.role==="admin")||!!(group&&group.owner===uid);
+  const myPlayerId=(me&&me.player_id)||null;
+  const playersView=useMemo(()=>players.map(p=>({...p,photo:photoCache[p.id]||null})),[players,photoCache]);
   const standings=useMemo(()=>
-    playersView.map(p=>({...p,stats:computeStats(p,matches)})).sort((a,b)=>b.stats.avg-a.stats.avg||b.stats.points-a.stats.points),
-    [playersView,matches]
-  );
+    playersView.map(p=>({...p,stats:computeStats(p,matches)}))
+      .sort((a,b)=>b.stats.avg-a.stats.avg||b.stats.points-a.stats.points),
+    [playersView,matches]);
 
-  if(!dbUrl) return <SetupScreen onComplete={setDbUrl}/>;
+  /* ─── scritture ─── */
+  const writeData=useCallback(async patch=>{
+    const cur=(groupRef.current&&groupRef.current.data)||{};
+    const next=Object.assign({players:[],matches:[]},cur,patch);
+    setGroup(g=>Object.assign({},g,{data:next}));
+    const{error}=await sb.from('groups').update({data:next,updated_at:nowIso(),updated_by:uid}).eq('id',groupId);
+    if(error){say(errText(error));loadGroup();return false;}
+    return true;
+  },[sb,groupId,uid,say,loadGroup]);
+
+  const updatePlayers=useCallback(fn=>writeData({players:fn(playersRef.current.map(p=>({...p})))}),[writeData]);
+  const saveMatches=useCallback(next=>writeData({matches:next}),[writeData]);
+
+  const setSel=useCallback(async patch=>{
+    const next=Object.assign({},selRef.current||{phase:"idle",assign:{}},patch);
+    setTeamSel(next);
+    const{error}=await sb.from('selections').upsert({group_id:groupId,state:next,updated_at:nowIso(),updated_by:uid});
+    if(error)say(errText(error));
+  },[sb,groupId,uid,say]);
+
+  /* ─── foto: tabella a parte, scaricate solo quando cambia il rev ─── */
+  const syncPhotos=useCallback(async()=>{
+    if(!sb||!groupId)return;
+    const{data:revs}=await sb.from('photos').select('player_id,rev').eq('group_id',groupId);
+    for(const r of revs||[]){
+      if(localStorage.getItem(PH_REV(groupId,r.player_id))===String(r.rev))continue;
+      const{data:one}=await sb.from('photos').select('photo').eq('group_id',groupId).eq('player_id',r.player_id).maybeSingle();
+      const b64=(one&&one.photo)||null;
+      writePhotoCache(groupId,r.player_id,b64,r.rev);
+      setPhotoCache(c=>Object.assign({},c,{[r.player_id]:b64||undefined}));
+    }
+  },[sb,groupId]);
+
+  useEffect(()=>{
+    if(!sb||!groupId)return;
+    syncPhotos();
+    const t=setInterval(syncPhotos,30000);
+    return()=>clearInterval(t);
+  },[sb,groupId,syncPhotos,players.length]);
+
+  const setPhoto=useCallback(async(playerId,src)=>{
+    const b64=!src?null:(typeof src==="string"?src:await resizePhoto(src));
+    if(src&&!b64){say("Foto non caricata");return false;}
+    const rev=Date.now();
+    const{error}=await sb.from('photos').upsert({group_id:groupId,player_id:playerId,photo:b64,rev,updated_at:nowIso()});
+    if(error){say(errText(error));return false;}
+    writePhotoCache(groupId,playerId,b64,rev);
+    setPhotoCache(c=>Object.assign({},c,{[playerId]:b64||undefined}));
+    return true;
+  },[sb,groupId,say]);
+
+  const removePlayer=useCallback(async id=>{
+    try{await sb.from('photos').delete().eq('group_id',groupId).eq('player_id',id);}catch(e){}
+    dropPhotoCache(groupId,id);
+    setPhotoCache(c=>{const n=Object.assign({},c);delete n[id];return n;});
+    return updatePlayers(list=>list.filter(p=>p.id!==id));
+  },[sb,groupId,updatePlayers]);
+
+  /* ─── account e gruppo ─── */
+  const claimPlayer=async pid=>{
+    const p=playersRef.current.find(x=>x.id===pid);
+    const{error}=await sb.from('group_members').update({player_id:pid,member_name:p?p.name:null}).eq('group_id',groupId).eq('user_id',uid);
+    if(error)throw error;
+    setMembers(ms=>ms.map(m=>m.user_id===uid?Object.assign({},m,{player_id:pid,member_name:p?p.name:null}):m));
+    setPanel(null);say("Bentrovato"+(p?", "+p.name:""));
+  };
+  const claimNew=async name=>{
+    const{error}=await sb.rpc('claim_new_player',{p_group:groupId,p_name:name});
+    if(error)throw new Error(/esiste già/i.test(error.message)?"C'è già un giocatore con questo nome: scegli quello dalla lista":errText(error));
+    await loadGroup();setPanel(null);say("Bentrovato, "+name);
+  };
+  const setRole=async(userId,role)=>{
+    const{error}=await sb.from('group_members').update({role}).eq('group_id',groupId).eq('user_id',userId);
+    if(error){say(errText(error));return;}
+    setMembers(ms=>ms.map(m=>m.user_id===userId?Object.assign({},m,{role}):m));
+    say(role==="admin"?"Ora è admin":"Ora è un giocatore");
+  };
+  const removeMember=async userId=>{
+    const{error}=await sb.from('group_members').delete().eq('group_id',groupId).eq('user_id',userId);
+    if(error){say(errText(error));return;}
+    setMembers(ms=>ms.filter(m=>m.user_id!==userId));say("Rimosso dal gruppo");
+  };
+  const renameGroup=async name=>{
+    const{error}=await sb.from('groups').update({name}).eq('id',groupId);
+    if(error){say(errText(error));return;}
+    setGroup(g=>Object.assign({},g,{name}));say("Nome aggiornato");
+  };
+  const leaveGroup=async()=>{
+    await sb.from('group_members').delete().eq('group_id',groupId).eq('user_id',uid);
+    setPanel(null);setGroup(null);setGroupId(null);await loadGroups();say("Sei uscito dal gruppo");
+  };
+  const logout=async()=>{
+    try{await sb.auth.signOut();}catch(e){}
+    setPanel(null);setGroup(null);setGroupId(null);setMembers([]);setGroups([]);
+  };
+
+  /* ─── migrazione dal vecchio Firebase ─── */
+  const migrate=async scan=>{
+    const conv=p=>{
+      if(p.base)return p.base;
+      if(!p.overrides)return null;
+      const auto=computeStats({id:p.id,base:null},scan.matches).auto;
+      const totals={};FIELDS.forEach(f=>{totals[f]=p.overrides[f]??auto[f];});
+      return baseFromTotals(totals,auto);
+    };
+    const nuovi=scan.players.map(p=>({id:String(p.id),name:String(p.name||"?"),base:conv(p)}));
+    const ok=await writeData({players:nuovi,matches:scan.matches});
+    if(!ok)throw new Error("Scrittura rifiutata");
+    let n=0;
+    for(const p of scan.players){
+      const b64=scan.photos[p.id]||p.photo;
+      if(!b64)continue;
+      const{error}=await sb.from('photos').upsert({group_id:groupId,player_id:String(p.id),photo:b64,rev:Date.now()+n,updated_at:nowIso()});
+      if(!error)n++;
+    }
+    await syncPhotos();
+    return{players:nuovi.length,matches:scan.matches.length,photos:n};
+  };
+
+  /* ─── schermate d'ingresso ─── */
+  if(!cfg)return <ConfigScreen pendingInvite={invite} onCfg={(c,code)=>{setCfg(c);setSb(makeClient(c));if(code)setInvite(code);}}/>;
+  if(!sb)return(
+    <Shell><Card><div style={{fontSize:14,color:C.text,lineHeight:1.7}}>
+      Non riesco a caricare la libreria di Supabase: probabilmente sei senza connessione. Riprova quando torni online.
+    </div><Btn onClick={()=>location.reload()} full style={{marginTop:14}}>Riprova</Btn></Card></Shell>
+  );
+  if(booting)return <Shell><div style={{textAlign:"center",color:C.muted,fontSize:13}}>Un attimo…</div></Shell>;
+  if(!session)return <AuthGate sb={sb} onReset={()=>{localStorage.removeItem(CFG_KEY);setCfg(null);setSb(null);}}/>;
+  if(!groupId||!group)return <GroupGate sb={sb} cfg={cfg} groups={groups} say={say} onPick={id=>{setGroupId(id);loadGroups();}} onOut={logout}/>;
+
+  /* finché non dici chi sei, il foglio resta aperto: senza identità la
+     selezione squadre non saprebbe di chi è il turno */
+  const devePresentarsi=!!(me&&!me.player_id);
 
   return(
     <div style={{background:C.bg,minHeight:"100vh",fontFamily:"'DM Sans',sans-serif",color:C.text}}>
-      {/* HEADER */}
       <header style={{position:"sticky",top:0,zIndex:100,background:"#090909EE",backdropFilter:"blur(16px)",borderBottom:`1px solid ${C.border}`,padding:"10px 16px",display:"flex",alignItems:"center",gap:12}}>
         <div style={{background:C.accent,borderRadius:10,width:38,height:38,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>⚽</div>
-        <div>
-          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,letterSpacing:4,lineHeight:1,color:C.text}}>CialtronApp</div>
+        <div style={{minWidth:0}}>
+          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,letterSpacing:2,lineHeight:1.1,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:160}}>{group.name}</div>
           <div style={{display:"flex",alignItems:"center",gap:6}}>
-            <div style={{width:6,height:6,borderRadius:"50%",background:conn?C.green:C.red}}/>
-            <div style={{fontSize:9,color:C.muted,letterSpacing:1}}>{conn?"LIVE":"OFFLINE"}</div>
+            <div style={{width:6,height:6,borderRadius:"50%",background:live?C.green:C.muted}}/>
+            <div style={{fontSize:9,color:C.muted,letterSpacing:1}}>{live?"LIVE":"COLLEGO…"}</div>
           </div>
         </div>
         <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:10}}>
@@ -1114,13 +1605,13 @@ function CialtronApp(){
             <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,color:C.text,lineHeight:1}}>{matches.length}</div>
             <div style={{fontSize:9,color:C.muted}}>PART.</div>
           </div>
-          <button onClick={()=>isAdmin?setIsAdmin(false):setShowAdmin(true)} style={{background:isAdmin?C.accent+"22":"none",border:`1px solid ${isAdmin?C.accent:C.border}`,color:isAdmin?C.accent:C.muted,borderRadius:8,padding:"6px 10px",cursor:"pointer",fontSize:12,fontFamily:"'DM Sans',sans-serif",fontWeight:700,marginLeft:4}}>
-            {isAdmin?"🔓 ADMIN":"🔒"}
+          <button onClick={()=>setPanel("account")} title="Account e gruppo"
+            style={{background:"none",border:`1px solid ${isAdmin?C.accent:C.border}`,borderRadius:10,padding:2,cursor:"pointer",flexShrink:0}}>
+            <Avatar player={playersView.find(p=>p.id===myPlayerId)||{name:email||"?"}} size={30}/>
           </button>
         </div>
       </header>
 
-      {/* AGGIORNAMENTO DISPONIBILE */}
       {update&&(
         <div style={{background:C.accent,color:"#000",padding:"10px 16px",display:"flex",alignItems:"center",gap:10}}>
           <div style={{flex:1,minWidth:0}}>
@@ -1132,9 +1623,6 @@ function CialtronApp(){
         </div>
       )}
 
-      {showAdmin&&<AdminModal dbUrl={dbUrl} onLogin={()=>{setIsAdmin(true);setShowAdmin(false);}} onClose={()=>setShowAdmin(false)}/>}
-
-      {/* NAV */}
       <nav style={{background:C.card,borderBottom:`1px solid ${C.border}`,display:"flex",overflowX:"auto",padding:"0 2px"}}>
         {NAV.map(n=>(
           <button key={n.id} onClick={()=>setTab(n.id)} style={{flex:"1 0 auto",border:"none",background:"none",cursor:"pointer",padding:"10px 8px",display:"flex",flexDirection:"column",alignItems:"center",gap:3,fontFamily:"'DM Sans',sans-serif",borderBottom:`2px solid ${tab===n.id?C.accent:"transparent"}`,transition:"border-color .2s"}}>
@@ -1144,14 +1632,30 @@ function CialtronApp(){
         ))}
       </nav>
 
-      {/* CONTENT */}
       <main style={{maxWidth:700,margin:"0 auto",padding:"22px 14px 100px"}}>
         {tab==="standings"&&<StandingsSection standings={standings} isAdmin={isAdmin} updatePlayers={updatePlayers}/>}
         {tab==="match"    &&<MatchSection players={playersView} matches={matches} isAdmin={isAdmin} saveMatches={saveMatches}/>}
-        {tab==="teams"    &&<TeamsSection standings={standings} dbUrl={dbUrl} teamSel={teamSel} reload={reload}/>}
-        {tab==="players"  &&<PlayersSection players={playersView} matches={matches} isAdmin={isAdmin} updatePlayers={updatePlayers} setPhoto={setPhoto} removePlayer={removePlayer}/>}
+        {tab==="teams"    &&<TeamsSection standings={standings} teamSel={teamSel} setSel={setSel} myPlayerId={myPlayerId} isAdmin={isAdmin}/>}
+        {tab==="players"  &&<PlayersSection players={playersView} matches={matches} isAdmin={isAdmin} myPlayerId={myPlayerId}
+                              updatePlayers={updatePlayers} setPhoto={setPhoto} removePlayer={removePlayer}/>}
         <div style={{textAlign:"center",fontSize:10,color:"#3A3A3A",marginTop:28,letterSpacing:1}}>v{APP_VERSION}</div>
       </main>
+
+      {(panel==="identity"||devePresentarsi)&&(
+        <IdentitySheet players={playersView} mine={myPlayerId} closable={!devePresentarsi}
+          onPick={claimPlayer} onNew={claimNew} onClose={()=>setPanel(null)}/>
+      )}
+      {panel==="account"&&(
+        <AccountPanel sb={sb} cfg={cfg} group={group} members={members} me={me} isAdmin={isAdmin}
+          players={playersView} email={email} say={say}
+          onClose={()=>setPanel(null)} onLogout={logout} onLeave={leaveGroup}
+          setRole={setRole} removeMember={removeMember} renameGroup={renameGroup}
+          openIdentity={()=>setPanel("identity")} migrate={migrate}/>
+      )}
+
+      {toast&&(
+        <div style={{position:"fixed",left:"50%",transform:"translateX(-50%)",bottom:"calc(24px + env(safe-area-inset-bottom))",background:C.card2,border:`1px solid ${C.border}`,borderRadius:12,padding:"11px 18px",fontSize:13,color:C.text,zIndex:600,boxShadow:"0 8px 30px rgba(0,0,0,.5)",maxWidth:"90vw",textAlign:"center"}}>{toast}</div>
+      )}
     </div>
   );
 }

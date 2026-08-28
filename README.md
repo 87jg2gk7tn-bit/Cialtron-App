@@ -3,80 +3,87 @@
 App web per gestire un gruppo di calcetto ricreativo.
 Single-file HTML standalone: nessun framework da installare, nessuna build, vanilla JS + React da CDN.
 
+Ogni giocatore ha il suo account. Il primo crea il gruppo, gli altri entrano con un codice
+invito e dicono chi sono nella rosa; da lì in poi le modifiche si vedono in tempo reale su
+tutti i telefoni.
+
 ## Come si aggiorna
 
-Ogni push su questo branch fa ripartire il workflow `.github/workflows/pages.yml`,
-che ripubblica il sito su GitHub Pages. L'app controlla `version.json` all'avvio,
-quando torna in primo piano e ogni 5 minuti: se la versione pubblicata è diversa da
-quella in esecuzione compare la barra **"Nuova versione disponibile → Aggiorna"**,
-che ricarica la pagina con un parametro anti-cache. La versione in esecuzione è
+Ogni push su `main` fa ripartire `.github/workflows/pages.yml`, che ripubblica il sito su
+GitHub Pages. Il service worker riprende sempre l'HTML dalla rete quando c'è (la cache serve
+solo offline), e l'app confronta `version.json` con la propria versione: se non coincidono
+compare la barra **"Nuova versione disponibile → Aggiorna"**. La versione in esecuzione è
 scritta in fondo a ogni schermata.
 
-Quando si pubblica una modifica vanno aggiornati insieme `APP_VERSION` in
-`index.html` e `version.json` (stesso valore, più una nota breve di cosa è cambiato).
+Pubblicando una modifica vanno aggiornati insieme `APP_VERSION` in `index.html` e
+`version.json` (stesso valore, più una nota breve).
 
 ## Installarla sul telefono
 
-L'app è pubblicabile su **GitHub Pages** (Settings → Pages → Source: Deploy from a branch → seleziona il branch, cartella `/root`).
-L'indirizzo diventa `https://<utente>.github.io/Cialtron-App/`.
+Apri il sito in **Safari** → Condividi → **Aggiungi a Home**. Parte a schermo intero con la
+sua icona. Su Android: Chrome → menu → Installa app.
 
-Sull'iPhone: apri il link in **Safari** → tasto Condividi → **Aggiungi a Home**.
-Parte a schermo intero con la sua icona, senza barra del browser (manifest + meta `apple-mobile-web-app-*` inclusi).
-Su Android: Chrome → menu → Installa app.
+> La web app installata su iOS ha uno spazio dati separato da Safari: la prima volta dentro
+> l'app va rifatto l'accesso.
 
 ## Stack tecnico
 
 | Cosa | Come |
 |---|---|
 | UI | React 18 da CDN, JSX compilato a runtime da Babel standalone |
-| Sync | Firebase Realtime Database via REST (`fetch` su `*.json`), nessun SDK |
+| Account e dati | Supabase: autenticazione email/password, Postgres con RLS, Realtime |
 | Import Excel | XLSX.js |
+| Offline e aggiornamenti | `sw.js`, network-first sull'HTML |
 | Font | Bebas Neue + DM Sans (Google Fonts) |
-| Persistenza locale | `localStorage`: URL del database (`cia-db-url`) e cache delle foto (`cia-photo-<id>`, `cia-photorev-<id>`) |
+| Sul dispositivo | `localStorage`: progetto Supabase (`cialtron_cfg`), ultimo gruppo (`cialtron_group`), cache foto (`cia-photo-<gruppo>-<giocatore>`) |
 
-## Modello dati (nodo radice Firebase)
+## Il database
+
+Lo schema completo è in **`supabase.sql`** — da incollare nel SQL Editor di Supabase e
+lanciare una volta sola. È riscrivibile: rieseguirlo non cancella dati.
 
 ```
-adminPin        "1234"
-players         [ { id, name, photoRev, base:{presences,wins,goals,mvps} } ]
-photos          { <playerId>: "data:image/jpeg;base64,…" }
-matches         [ { id, date, white:[id], black:[id], winner:"white"|"black", mvp, goals:{id:n} } ]
-teamSelection   { phase:"idle"|"picking"|"captain"|"done", assign:{id:"white"|"black"},
-                  captainSide, finalWhite:[id], finalBlack:[id] }
+groups         id, owner, name, invite_code, data jsonb   ← rosa e partite, ci scrivono gli admin
+group_members  group_id, user_id, player_id, role         ← chi è chi, e chi può cosa
+selections     group_id, state jsonb                      ← selezione squadre, ci scrivono tutti i membri
+photos         group_id, player_id, photo, rev            ← fuori dal documento: sono base64 pesanti
 ```
 
-Le statistiche **non** sono memorizzate: `computeStats()` le ricalcola dalle partite a ogni render e
-ci somma `base`, cioè la parte manuale (storico importato da Excel o correzione fatta con ✏️).
-Le partite registrate dopo continuano quindi ad aggiornare i totali.
+Le statistiche **non** sono memorizzate: si ricalcolano dalle partite e ci si somma `base`,
+la parte manuale (storico importato o correzione con ✏️). Le partite registrate dopo
+continuano quindi ad aggiornare i totali.
 
-Le foto stanno nel nodo `photos`, fuori da `players`: il polling ogni 3 secondi legge solo
-`players`, `matches` e `teamSelection`, e una foto viene riscaricata solo quando il suo
-`photoRev` cambia. Sul dispositivo resta in cache in `localStorage`.
+I permessi stanno nelle policy RLS, non nell'app: un giocatore che provasse a scrivere la
+classifica verrebbe fermato dal database. Le regole sono verificate da `test/rls-test.sh`
+(27 controlli su un Postgres locale con un finto schema `auth`).
+
+## Ruoli
+
+| | admin | giocatore |
+|---|---|---|
+| Classifica, partite, rosa, import | ✅ | 👀 sola lettura |
+| Selezione squadre | ✅ | ✅ (al proprio turno: picker o capitano) |
+| La propria foto e il proprio nome | ✅ | ✅ |
+| Invitare, promuovere altri admin | ✅ | ❌ |
+
+Chi crea il gruppo ne è il proprietario, è sempre admin e non è degradabile.
 
 ## Funzionalità
 
-* **Classifica** — ordinata per media (punti ÷ presenze), 3 punti per vittoria, badge CAP (1º) e PICK (ultimo), correzione manuale delle stat con ✏️ (solo admin). Layout compatto sotto i 460 px, tabellare sopra
-* **Partite** — flusso in 3 step: squadre → vincitore → MVP e gol; storico cancellabile con conferma
-* **Selezione squadre** — il Picker (ultimo in classifica) forma le squadre, invia la proposta al Capitano (primo) che sceglie il lato; sincronizzata per tutti via polling Firebase ogni 3 s
-* **Rosa** — foto caricabile dal telefono (ritagliata a 160 px, JPEG 65 %), nome modificabile, 5 statistiche calcolate automaticamente
-* **Import Excel** — colonne `Nome · Presenze · Vittorie · Gol · MVP` (accetta anche Giocatore/Partite/Vinte/Reti); anteprima prima di confermare, aggiorna gli esistenti e aggiunge i nuovi
-* **Admin PIN** — solo chi conosce il PIN (salvato su Firebase) modifica i dati; gli altri vedono tutto e partecipano alla selezione squadre
-* **Setup guidato** — al primo avvio chiede l'URL Firebase; se il database contiene già un gruppo ci si entra come ospiti senza toccare i dati, se è vuoto si sceglie il PIN admin
+* **Classifica** — media (punti ÷ presenze), 3 punti per vittoria, badge CAP (1º) e PICK (ultimo), correzione manuale con ✏️. Compatta sotto i 460 px, tabellare sopra
+* **Partite** — 3 step: squadre → vincitore → MVP e gol; storico cancellabile
+* **Selezione squadre** — il Picker forma le squadre, il Capitano sceglie il lato; in tempo reale, e ognuno agisce solo al proprio turno
+* **Rosa** — foto dal telefono (ritagliata a 160 px, JPEG 65 %), 5 statistiche calcolate
+* **Import Excel** — `Nome · Presenze · Vittorie · Gol · MVP`, con anteprima
+* **Migrazione** — porta dentro rosa, partite e foto dal vecchio database Firebase
 
-## Setup del database
+## Primo avvio
 
-1. [console.firebase.google.com](https://console.firebase.google.com) → nuovo progetto
-2. Realtime Database → Crea database → modalità test
-3. Copia l'URL (`https://xxx-default-rtdb.firebaseio.com`) e incollalo al primo avvio dell'app
-4. Scegli il PIN admin
+1. [supabase.com](https://supabase.com) → **New project**
+2. **SQL Editor** → incolla `supabase.sql` → **Run**
+3. **Authentication → Sign In / Providers → Email** → togli *Confirm email*
+4. **Project Settings → API** → copia *Project URL* e *chiave anon* nell'app
+5. Crea il gruppo, aggiungi la rosa, condividi il codice invito
 
-> Le regole "modalità test" scadono dopo 30 giorni. Per non perdere l'accesso, in
-> Firebase → Realtime Database → Regole imposta `{"rules":{".read":true,".write":true}}`.
-
-Il PIN admin è leggibile da chiunque conosca l'URL del database: è un freno tra amici,
-non una misura di sicurezza.
-
-## Aperto
-
-* **Identità del dispositivo** — nella selezione squadre chiunque può agire da Picker o da Capitano
-* **Scritture concorrenti** — ogni salvataggio riscrive l'intero nodo: se due admin modificano insieme, vince l'ultimo
+La chiave *anon* è fatta per stare nell'app: da sola non apre niente, sono le policy a
+decidere chi vede cosa. La *service_role* non va mai messa qui dentro.
