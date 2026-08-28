@@ -6,7 +6,6 @@ on:
   push:
     branches:
       - main
-      - claude/cialtronapp-project-status-vm42ul
   workflow_dispatch:
 
 permissions:
