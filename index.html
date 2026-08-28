@@ -48,6 +48,32 @@ const {useState,useEffect,useRef,useMemo,useCallback} = React;
 ═══════════════════════════════════════════════════════ */
 const C={accent:"#B8FF00",bg:"#090909",card:"#111",card2:"#1A1A1A",card3:"#222",
          text:"#F2F2F2",muted:"#666",border:"#1F1F1F",red:"#FF4444",green:"#22C55E"};
+
+/* Versione pubblicata: confrontata con version.json per avvisare che c'è
+   un aggiornamento. Sul telefono la pagina resta in cache, senza questo
+   controllo le modifiche non arriverebbero finché non si svuota la cache. */
+const APP_VERSION="2026-08-28.3";
+
+function useUpdateCheck(){
+  const [next,setNext]=useState(null);
+  useEffect(()=>{
+    let dead=false;
+    const check=async()=>{
+      try{
+        const r=await fetch("version.json?t="+Date.now(),{cache:"no-store"});
+        if(!r.ok)return;
+        const d=await r.json();
+        if(!dead&&d&&d.version&&d.version!==APP_VERSION)setNext(d);
+      }catch(e){/* offline o aperto come file locale: nessun avviso */}
+    };
+    check();
+    const id=setInterval(check,5*60*1000);
+    const onVis=()=>{if(document.visibilityState==="visible")check();};
+    document.addEventListener("visibilitychange",onVis);
+    return()=>{dead=true;clearInterval(id);document.removeEventListener("visibilitychange",onVis);};
+  },[]);
+  return next;
+}
 /* ═══════════════════════════════════════════════════════
    FIREBASE REST HELPERS
 ═══════════════════════════════════════════════════════ */
@@ -948,6 +974,7 @@ function CialtronApp(){
   const [isAdmin,setIsAdmin]=useState(false);
   const [showAdmin,setShowAdmin]=useState(false);
   const [conn,setConn]=useState(false);
+  const update=useUpdateCheck();
   const pollRef=useRef(null), playersRef=useRef([]), migrRef=useRef(false);
   playersRef.current=players;
 
@@ -1093,6 +1120,18 @@ function CialtronApp(){
         </div>
       </header>
 
+      {/* AGGIORNAMENTO DISPONIBILE */}
+      {update&&(
+        <div style={{background:C.accent,color:"#000",padding:"10px 16px",display:"flex",alignItems:"center",gap:10}}>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:13,fontWeight:800}}>Nuova versione disponibile</div>
+            {update.note&&<div style={{fontSize:11,opacity:.75,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{update.note}</div>}
+          </div>
+          <button onClick={()=>location.replace(location.pathname+"?v="+encodeURIComponent(update.version))}
+            style={{background:"#000",color:C.accent,border:"none",borderRadius:8,padding:"8px 14px",fontSize:13,fontWeight:800,fontFamily:"'DM Sans',sans-serif",cursor:"pointer",flexShrink:0}}>Aggiorna</button>
+        </div>
+      )}
+
       {showAdmin&&<AdminModal dbUrl={dbUrl} onLogin={()=>{setIsAdmin(true);setShowAdmin(false);}} onClose={()=>setShowAdmin(false)}/>}
 
       {/* NAV */}
@@ -1111,6 +1150,7 @@ function CialtronApp(){
         {tab==="match"    &&<MatchSection players={playersView} matches={matches} isAdmin={isAdmin} saveMatches={saveMatches}/>}
         {tab==="teams"    &&<TeamsSection standings={standings} dbUrl={dbUrl} teamSel={teamSel} reload={reload}/>}
         {tab==="players"  &&<PlayersSection players={playersView} matches={matches} isAdmin={isAdmin} updatePlayers={updatePlayers} setPhoto={setPhoto} removePlayer={removePlayer}/>}
+        <div style={{textAlign:"center",fontSize:10,color:"#3A3A3A",marginTop:28,letterSpacing:1}}>v{APP_VERSION}</div>
       </main>
     </div>
   );

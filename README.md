@@ -3,6 +3,18 @@
 App web per gestire un gruppo di calcetto ricreativo.
 Single-file HTML standalone: nessun framework da installare, nessuna build, vanilla JS + React da CDN.
 
+## Come si aggiorna
+
+Ogni push su questo branch fa ripartire il workflow `.github/workflows/pages.yml`,
+che ripubblica il sito su GitHub Pages. L'app controlla `version.json` all'avvio,
+quando torna in primo piano e ogni 5 minuti: se la versione pubblicata è diversa da
+quella in esecuzione compare la barra **"Nuova versione disponibile → Aggiorna"**,
+che ricarica la pagina con un parametro anti-cache. La versione in esecuzione è
+scritta in fondo a ogni schermata.
+
+Quando si pubblica una modifica vanno aggiornati insieme `APP_VERSION` in
+`index.html` e `version.json` (stesso valore, più una nota breve di cosa è cambiato).
+
 ## Installarla sul telefono
 
 L'app è pubblicabile su **GitHub Pages** (Settings → Pages → Source: Deploy from a branch → seleziona il branch, cartella `/root`).
