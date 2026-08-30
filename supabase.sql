@@ -4,6 +4,19 @@
 --  È riscrivibile: eseguirlo di nuovo non rompe niente e non cancella dati.
 -- ═══════════════════════════════════════════════════════════════════
 
+-- ─── Freno di sicurezza ────────────────────────────────────────────
+-- Se questo script viene lanciato per sbaglio nel progetto di un'altra app,
+-- si ferma prima di toccare qualsiasi cosa. Serve perché definisce funzioni
+-- con nomi comuni (is_member, is_admin) che un "create or replace" nel
+-- database sbagliato sovrascriverebbe, rompendo quell'altra app.
+
+do $$
+begin
+  if to_regclass('public.trips') is not null or to_regclass('public.trip_members') is not null then
+    raise exception E'Fermo: questo database contiene la tabella "trips", quindi è quello di GeppGo, non di CialtronApp.\nCrea un progetto Supabase nuovo, selezionalo in alto a sinistra, e rilancia lo script lì.';
+  end if;
+end $$;
+
 -- ─── Tabelle ───────────────────────────────────────────────────────
 
 -- Il gruppo di calcetto. `data` contiene rosa e partite in un unico
