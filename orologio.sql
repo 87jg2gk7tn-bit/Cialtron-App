@@ -106,6 +106,10 @@ begin
   if g is null then raise exception 'codice non valido'; end if;
 
   testo := btrim(coalesce(p_who, ''));
+  -- Un errore cieco fa perdere mezz'ora: se non è arrivato niente, dillo.
+  if testo = '' then
+    raise exception 'non è arrivato nessun nome: nella scorciatoia il valore di p_who dev''essere il riquadro della variabile, non testo scritto a mano';
+  end if;
   if live_norm(testo) ~ '(annulla|annullare|undo|cancella|togli)' then
     return live_undo(p_code);
   end if;
@@ -145,7 +149,7 @@ begin
     elsif coalesce(st->'finalBlack','[]'::jsonb) ? pid then sq := 'black'; end if;
   end if;
   if sq is null then
-    raise exception 'non so per che squadra segna: metti ⬜ o ⬛ davanti al nome';
+    raise exception 'non so per che squadra segna "%": fate le squadre in app, oppure metti ⬜ o ⬛ davanti al nome', coalesce(trovato, testo);
   end if;
 
   insert into live_goals (group_id, team, player_id, who) values (g, sq, pid, trovato);
