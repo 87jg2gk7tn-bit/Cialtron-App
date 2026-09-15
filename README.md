@@ -132,6 +132,8 @@ per dirla, e la stessa casella accetta `⬜ senza nome` (punteggio senza marcato
 **La scorciatoia, una volta sola** (iPhone → Comandi Rapidi → +):
 
 1. **Testo** — l'elenco dei nomi, uno per riga, più `⬜ senza nome`, `⬛ senza nome`, `Annulla ultimo`
+   (le azioni si cercano nella barra *"Cerca app e azioni"*, sezione **Azioni**; in alternativa l'azione
+   **Elenco**, che tiene già una voce per riga e fa saltare il passo 2)
 2. **Dividi testo** — separatore *Nuove righe*
 3. **Scegli da un elenco**
 4. **Ottieni contenuto di URL** — `POST` su `https://<progetto>.supabase.co/rest/v1/rpc/live_goal`,

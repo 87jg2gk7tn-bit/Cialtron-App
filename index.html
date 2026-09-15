@@ -56,7 +56,7 @@ const C={accent:"#B8FF00",bg:"#090909",card:"#111",card2:"#1A1A1A",card3:"#222",
 /* Versione pubblicata: confrontata con version.json per avvisare che c'è
    un aggiornamento. Sul telefono la pagina resta in cache, senza questo
    controllo le modifiche non arriverebbero finché non si svuota la cache. */
-const APP_VERSION="2026-09-15.14";
+const APP_VERSION="2026-09-15.15";
 
 function useUpdateCheck(){
   const [next,setNext]=useState(null);
@@ -732,12 +732,15 @@ function PolsoSetup({sb,cfg,group,players,say}){
         <div style={{fontSize:10,color:C.muted,letterSpacing:1}}>CODICE PER L'OROLOGIO</div>
       </div>
       <div style={{fontSize:12,color:C.muted,lineHeight:1.7,marginBottom:12}}>
-        Sull'iPhone, <em>Comandi Rapidi</em> → <strong style={{color:C.text}}>+</strong>:<br/>
-        1. <strong style={{color:C.text}}>Testo</strong> con l'elenco qui sotto (un nome per riga)<br/>
+        Sull'iPhone, <em>Comandi Rapidi</em> → <strong style={{color:C.text}}>+</strong>. Le azioni si cercano nella
+        barra in basso <em>"Cerca app e azioni"</em>: scrivi il nome e guarda sotto <em>Azioni</em>, non fra le app.<br/><br/>
+        1. <strong style={{color:C.text}}>Testo</strong> — incolla l'elenco qui sotto (un nome per riga). Se non la trovi,
+        usa <strong style={{color:C.text}}>Elenco</strong> e scrivi i nomi uno per riga con il <strong style={{color:C.text}}>+</strong>: salti anche il passo 2.<br/>
         2. <strong style={{color:C.text}}>Dividi testo</strong>, separatore <em>Nuove righe</em><br/>
         3. <strong style={{color:C.text}}>Scegli da un elenco</strong><br/>
-        4. <strong style={{color:C.text}}>Ottieni contenuto di URL</strong>: metodo POST, intestazioni <code>apikey</code> e <code>Content-Type: application/json</code>, corpo JSON come sotto<br/>
-        5. <strong style={{color:C.text}}>Mostra risultato</strong> → <code>testo</code><br/>
+        4. <strong style={{color:C.text}}>Ottieni contenuto di URL</strong>: metodo POST, intestazioni <code>apikey</code> e <code>Content-Type: application/json</code>, corpo JSON come sotto (il valore di <code>p_who</code> è la variabile <em>Elemento scelto</em>)<br/>
+        5. <strong style={{color:C.text}}>Ottieni valore dal dizionario</strong>: chiave <code>testo</code><br/>
+        6. <strong style={{color:C.text}}>Mostra risultato</strong><br/>
         Chiamalo <strong style={{color:C.text}}>GOL</strong>: lo trovi nei Comandi Rapidi dell'orologio e puoi metterlo sul quadrante.
       </div>
       <Riga etichetta="ELENCO (PASSO 1)" valore={elenco}/>
