@@ -56,7 +56,7 @@ const C={accent:"#B8FF00",bg:"#090909",card:"#111",card2:"#1A1A1A",card3:"#222",
 /* Versione pubblicata: confrontata con version.json per avvisare che c'è
    un aggiornamento. Sul telefono la pagina resta in cache, senza questo
    controllo le modifiche non arriverebbero finché non si svuota la cache. */
-const APP_VERSION="2026-09-15.7";
+const APP_VERSION="2026-09-15.8";
 
 function useUpdateCheck(){
   const [next,setNext]=useState(null);
@@ -1303,9 +1303,11 @@ function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capI
     if(p.indexOf(capId)<0)p.push(capId);
     if(p.indexOf(pickId)<0)p.push(pickId);
     setSel({phase:m==="cava"?"picking":"draft",method:m,pool:p,ext:extN,
+            capId,pickId,   // congelati: da qui in poi non si muovono più
             assign:{},picks:[],captainSide:null,finalWhite:null,finalBlack:null});
   };
   const reset=()=>setSel({phase:"idle",method:metodo,assign:{},picks:[],pool:[],ext:0,
+                          capId:null,pickId:null,
                           captainSide:null,finalWhite:null,finalBlack:null});
   const aggiungiEsterno=()=>{
     const n=extN+1;
@@ -2269,11 +2271,28 @@ function CialtronApp(){
   },[board.callups,matchIso]);
   /* chi scende in campo: i disponibili della convocazione, salvo diverso
      accordo del gruppo (playAll). Su questi si calcolano capitano e formatore. */
+  /* Chi ha detto NO non gioca, e quindi non può nemmeno fare il capitano o il
+     formatore: il ruolo passa al successivo in classifica. Vale anche quando il
+     gruppo ha scelto di pescare da tutta la rosa — lì la convocazione non
+     decide chi gioca, ma un "non ci sono" resta un'assenza dichiarata. */
+  const assentiIds=useMemo(()=>{
+    const g=board.callups[matchIso]||{};
+    return Object.keys(g).filter(id=>g[id]&&g[id].v==="no");
+  },[board.callups,matchIso]);
   const eligible=useMemo(()=>{
     const disp=standings.filter(p=>availableIds.indexOf(p.id)>=0);
-    return (!board.settings.playAll&&disp.length>=2)?disp:standings;
-  },[standings,availableIds,board.settings.playAll]);
-  const {capId,pickId,capManual,pickManual}=useMemo(()=>rolesOf(eligible,board.settings),[eligible,board.settings]);
+    if(!board.settings.playAll&&disp.length>=2)return disp;
+    const senzaAssenti=standings.filter(p=>assentiIds.indexOf(p.id)<0);
+    return senzaAssenti.length>=2?senzaAssenti:standings;
+  },[standings,availableIds,assentiIds,board.settings.playAll]);
+  const ruoliVivi=useMemo(()=>rolesOf(eligible,board.settings),[eligible,board.settings]);
+  /* A selezione avviata i ruoli restano quelli di quando è partita: se uno
+     cambia risposta a metà chiamata, capitano e formatore non devono cambiare
+     sotto le mani di chi sta scegliendo. */
+  const selAvviata=!!(teamSel&&teamSel.phase&&teamSel.phase!=="idle"&&teamSel.capId&&teamSel.pickId);
+  const capId=selAvviata?teamSel.capId:ruoliVivi.capId;
+  const pickId=selAvviata?teamSel.pickId:ruoliVivi.pickId;
+  const {capManual,pickManual}=ruoliVivi;
   const rispostaMia=myPlayerId?((board.callups[matchIso]||{})[myPlayerId]||{}).v:null;
   /* di chi è il turno adesso, per la barra in cima */
   const selPicks=(teamSel&&teamSel.picks)||[];
