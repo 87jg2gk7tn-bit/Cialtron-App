@@ -1,4 +1,4 @@
 {
-  "version": "2026-09-15.8",
-  "note": "Chi non c'è non fa il capitano: passa al successivo"
+  "version": "2026-09-15.9",
+  "note": "Se il capitano scelto a mano dà forfait, l'app lo dice e passa il ruolo"
 }

@@ -56,7 +56,7 @@ const C={accent:"#B8FF00",bg:"#090909",card:"#111",card2:"#1A1A1A",card3:"#222",
 /* Versione pubblicata: confrontata con version.json per avvisare che c'è
    un aggiornamento. Sul telefono la pagina resta in cache, senza questo
    controllo le modifiche non arriverebbero finché non si svuota la cache. */
-const APP_VERSION="2026-09-15.8";
+const APP_VERSION="2026-09-15.9";
 
 function useUpdateCheck(){
   const [next,setNext]=useState(null);
@@ -1253,7 +1253,7 @@ const isExt=id=>/^ext\d+$/.test(String(id||""));
 const extName=id=>"Esterno "+String(id).slice(3);
 const extPlayer=id=>({id,name:extName(id),ext:true});
 
-function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capId,pickId,capManual,pickManual,setSettings,availableIds,playAll,onUseTeams,onAggiungi}){
+function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capId,pickId,capManual,pickManual,decaduti,setSettings,availableIds,playAll,onUseTeams,onAggiungi}){
   const [scegli,setScegli]=useState(false);
   const [agg,setAgg]=useState(false);
   const [modifica,setModifica]=useState(false);
@@ -1418,8 +1418,16 @@ function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capI
             ))}
           </div>
 
+          {(decaduti||[]).length>0&&(
+            <div style={{background:C.red+"10",border:`1px solid ${C.red}30`,borderRadius:12,padding:"10px 12px",marginBottom:10,fontSize:11,color:C.text,lineHeight:1.5}}>
+              {(decaduti||[]).map(d=>(
+                <div key={d.ruolo}>{d.name} era {d.ruolo} per scelta vostra, ma ha detto che non c'è: il ruolo passa alla classifica.</div>
+              ))}
+            </div>
+          )}
+
           <Btn onClick={()=>setScegli(v=>!v)} variant="ghost" full small>
-            {scegli?"Chiudi":(capManual||pickManual)?"Capitano e formatore scelti a mano · cambia":"Scegli capitano e formatore a mano"}
+            {scegli?"Chiudi":(capManual||pickManual||(decaduti||[]).length>0)?"Capitano e formatore scelti a mano · cambia":"Scegli capitano e formatore a mano"}
           </Btn>
           {scegli&&(
             <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:12,marginTop:8}}>
@@ -1436,7 +1444,7 @@ function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capI
                   ))}
                 </div>
               ))}
-              {(capManual||pickManual)&&<Btn onClick={automatico} variant="ghost" full small style={{marginTop:10}}>↺ Torna alla classifica</Btn>}
+              {(capManual||pickManual||(decaduti||[]).length>0)&&<Btn onClick={automatico} variant="ghost" full small style={{marginTop:10}}>↺ Torna alla classifica</Btn>}
             </div>
           )}
 
@@ -2286,6 +2294,17 @@ function CialtronApp(){
     return senzaAssenti.length>=2?senzaAssenti:standings;
   },[standings,availableIds,assentiIds,board.settings.playAll]);
   const ruoliVivi=useMemo(()=>rolesOf(eligible,board.settings),[eligible,board.settings]);
+  /* Ruolo scelto a mano e poi decaduto perché quel giocatore non c'è: va detto,
+     se no sembra che l'app abbia ignorato la scelta del gruppo. */
+  const ruoliDecaduti=useMemo(()=>{
+    const s=board.settings||{};
+    return [["captainId","capitano"],["pickerId","formatore"]].map(([k,ruolo])=>{
+      const id=s[k];
+      if(!id||eligible.some(p=>p.id===id))return null;
+      const p=standings.find(x=>x.id===id);
+      return p?{ruolo,name:p.name}:null;
+    }).filter(Boolean);
+  },[board.settings,eligible,standings]);
   /* A selezione avviata i ruoli restano quelli di quando è partita: se uno
      cambia risposta a metà chiamata, capitano e formatore non devono cambiare
      sotto le mani di chi sta scegliendo. */
@@ -2406,6 +2425,7 @@ function CialtronApp(){
         {tab==="teams"    &&<TeamsSection standings={standings} teamSel={teamSel} setSel={setSel} myPlayerId={myPlayerId} isAdmin={isAdmin}
                               capId={capId} pickId={pickId} capManual={capManual} pickManual={pickManual} setSettings={setSettings}
                               availableIds={availableIds} eligible={eligible} playAll={!!board.settings.playAll}
+                              decaduti={ruoliDecaduti}
                               onUseTeams={isAdmin?usaSquadre:null}
                               onAggiungi={pid=>setCallup(pid,"si",matchIso)}/>}
         {tab==="players"  &&<PlayersSection players={playersView} matches={matches} isAdmin={isAdmin} myPlayerId={myPlayerId}
