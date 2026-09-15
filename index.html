@@ -56,7 +56,7 @@ const C={accent:"#B8FF00",bg:"#090909",card:"#111",card2:"#1A1A1A",card3:"#222",
 /* Versione pubblicata: confrontata con version.json per avvisare che c'è
    un aggiornamento. Sul telefono la pagina resta in cache, senza questo
    controllo le modifiche non arriverebbero finché non si svuota la cache. */
-const APP_VERSION="2026-09-15.10";
+const APP_VERSION="2026-09-15.11";
 
 function useUpdateCheck(){
   const [next,setNext]=useState(null);
@@ -199,6 +199,25 @@ function computeStats(player, matches){
 }
 
 /* dai totali mostrati a schermo alla base da salvare (null = tutto automatico) */
+/* Tre classifiche dagli stessi numeri: generale a media punti, marcatori a
+   gol, MVP a premi. A parità si scende di criterio e in fondo c'è il nome, se
+   no l'ordine balla da solo a ogni ricalcolo. */
+const VISTE=[{k:"generale", lab:"GENERALE", campo:"avg",   etichetta:"media",
+              sub:"3 punti per vittoria · media = punti ÷ presenze", vuoto:null},
+             {k:"marcatori",lab:"MARCATORI",campo:"goals", etichetta:"gol",
+              sub:"Chi ha segnato di più", vuoto:"Nessun gol registrato per ora."},
+             {k:"mvp",      lab:"MVP",      campo:"mvps",  etichetta:"mvp",
+              sub:"Chi è stato eletto migliore più volte", vuoto:"Nessun MVP assegnato per ora."}];
+const vistaDi=k=>VISTE.find(v=>v.k===k)||VISTE[0];
+function ordinaPer(standings,vista){
+  const l=(standings||[]).slice();
+  const nome=(a,b)=>String(a.name||"").localeCompare(String(b.name||""));
+  if(vista==="marcatori")l.sort((a,b)=>b.stats.goals-a.stats.goals||b.stats.avg-a.stats.avg||nome(a,b));
+  else if(vista==="mvp") l.sort((a,b)=>b.stats.mvps -a.stats.mvps ||b.stats.avg-a.stats.avg||nome(a,b));
+  else                   l.sort((a,b)=>b.stats.avg  -a.stats.avg  ||b.stats.points-a.stats.points||nome(a,b));
+  return l;
+}
+
 function baseFromTotals(totals, auto){
   const base={}; let manual=false;
   for(const f of FIELDS){
@@ -735,8 +754,268 @@ function useNarrow(bp=460){
 
 const SHORT={presences:"P",wins:"V",goals:"GOL",mvps:"MVP"};
 
-function StandingsSection({standings,isAdmin,updatePlayers,capId,pickId}){
+/* ═══════════════════════════════════════════════════════
+   CLASSIFICA IN PDF — un foglio da mandare nel gruppo
+   La libreria si scarica solo quando si preme il tasto: è pesante e
+   serve una volta ogni tanto, non ha senso farla pagare a ogni apertura.
+═══════════════════════════════════════════════════════ */
+const JSPDF_SRC="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+let jspdfPromise=null;
+function loadJsPDF(){
+  const pronto=()=>window.jspdf&&window.jspdf.jsPDF;
+  if(pronto())return Promise.resolve(pronto());
+  if(!jspdfPromise)jspdfPromise=new Promise((res,rej)=>{
+    const s=document.createElement("script");
+    s.src=JSPDF_SRC; s.async=true;
+    s.onload=()=>pronto()?res(pronto()):rej(new Error("libreria"));
+    s.onerror=()=>{jspdfPromise=null;rej(new Error("rete"));};
+    document.head.appendChild(s);
+  });
+  return jspdfPromise;
+}
+
+const rgb=h=>{const n=parseInt(String(h).replace("#",""),16);return[(n>>16)&255,(n>>8)&255,n&255];};
+/* niente trasparenze nel PDF: i veli dell'app si rifanno mescolando i colori */
+const velo=(sopra,sotto,a)=>{const A=rgb(sopra),B=rgb(sotto);return A.map((v,i)=>Math.round(v*a+B[i]*(1-a)));};
+const P_BG="#090909",P_CARD="#111111",P_CARD2="#1A1A1A",P_BORD="#242424",
+      P_TXT="#F2F2F2",P_MUT="#7A7A7A",P_ACC="#B8FF00",P_RED="#FF4444";
+const COLS_AV=["#FF6B6B","#4ECDC4","#45B7D1","#A78BFA","#F59E0B","#34D399","#F472B6","#60A5FA"];
+const colorePer=nome=>COLS_AV[(String(nome||"?").charCodeAt(0)||0)%COLS_AV.length];
+
+/* la foto ritagliata tonda: il PDF non sa fare le maschere, la facciamo qui */
+function fotoTonda(src,px){
+  return new Promise(res=>{
+    if(!src)return res(null);
+    const img=new Image();
+    img.onload=()=>{
+      try{
+        const c=document.createElement("canvas");c.width=c.height=px||220;
+        const x=c.getContext("2d"),d=c.width;
+        x.beginPath();x.arc(d/2,d/2,d/2,0,Math.PI*2);x.closePath();x.clip();
+        const r=Math.max(d/img.width,d/img.height),w=img.width*r,h=img.height*r;
+        x.drawImage(img,(d-w)/2,(d-h)/2,w,h);
+        res(c.toDataURL("image/png"));
+      }catch(e){res(null);}
+    };
+    img.onerror=()=>res(null);
+    img.src=src;
+  });
+}
+
+function pdfClassifica(jsPDF,{standings:rosa,matches,gruppo,foto}){
+  const standings=ordinaPer(rosa,"generale");
+  const doc=new jsPDF({unit:"mm",format:"a4"});
+  const M=14,R=196,W=210,H=297;
+  const set=(f,c)=>{doc.setFont("helvetica",f);doc.setTextColor.apply(doc,rgb(c));};
+  const fill=c=>doc.setFillColor.apply(doc,Array.isArray(c)?c:rgb(c));
+  const draw=c=>doc.setDrawColor.apply(doc,Array.isArray(c)?c:rgb(c));
+  const taglia=(t,max)=>{let s=String(t||"");if(doc.getTextWidth(s)<=max)return s;
+    while(s.length>1&&doc.getTextWidth(s+"…")>max)s=s.slice(0,-1);return s+"…";};
+  const sfondo=()=>{fill(P_BG);doc.rect(0,0,W,H,"F");};
+
+  /* il tondo con l'iniziale, per chi non ha messo la foto */
+  const tondo=(cx,cy,r,p)=>{
+    const f=foto[p.id];
+    if(f){doc.addImage(f,"PNG",cx-r,cy-r,r*2,r*2);return;}
+    const col=colorePer(p.name);
+    fill(velo(col,P_CARD,.16));draw(velo(col,P_CARD,.42));doc.setLineWidth(.4);
+    doc.circle(cx,cy,r,"FD");
+    doc.setFont("helvetica","bold");doc.setFontSize(r*2.6);
+    doc.setTextColor.apply(doc,rgb(col));
+    doc.text(String(p.name||"?")[0].toUpperCase(),cx,cy+r*.52,{align:"center"});
+  };
+
+  const oggi=new Date();
+  const dataLunga=oggi.toLocaleDateString("it-IT",{day:"numeric",month:"long",year:"numeric"});
+  const piede=()=>{
+    draw(P_BORD);doc.setLineWidth(.2);doc.line(M,283,R,283);
+    set("normal",P_MUT);doc.setFontSize(7);
+    doc.text("CialtronApp · "+taglia(gruppo,90)+" · "+dataLunga,M,288);
+  };
+  const nuovaPagina=()=>{piede();doc.addPage();sfondo();
+    set("bold",P_TXT);doc.setFontSize(11);doc.setCharSpace(1.5);
+    doc.text("CLASSIFICA",M,22);doc.setCharSpace(0);
+    set("normal",P_MUT);doc.setFontSize(8);
+    doc.text(taglia(String(gruppo||"").toUpperCase(),80),R,22,{align:"right"});
+    draw(P_BORD);doc.setLineWidth(.2);doc.line(M,26,R,26);
+    return 34;
+  };
+
+  /* ── testata ── */
+  sfondo();
+  fill(P_ACC);doc.roundedRect(M,15,3,15,1.4,1.4,"F");
+  set("normal",P_MUT);doc.setFontSize(8);doc.setCharSpace(.7);
+  doc.text(taglia(String(gruppo||"IL GRUPPO").toUpperCase(),110),M+7,19.5);
+  doc.setCharSpace(2);set("bold",P_TXT);doc.setFontSize(23);
+  doc.text("CLASSIFICA",M+7,29.5);doc.setCharSpace(0);
+  set("normal",P_MUT);doc.setFontSize(8);
+  doc.text(dataLunga,R,19.5,{align:"right"});
+  const plur=(n,uno,tanti)=>n+" "+(n===1?uno:tanti);
+  doc.text(plur(standings.length,"giocatore","giocatori")+" · "+plur((matches||[]).length,"partita","partite"),R,25,{align:"right"});
+  draw(P_BORD);doc.setLineWidth(.2);doc.line(M,35,R,35);
+
+  /* ── il podio ── */
+  let y=43;
+  if(standings.length>=3){
+    const w=(R-M-12)/3,h=52;
+    standings.slice(0,3).forEach((p,i)=>{
+      const x=M+i*(w+6),primo=i===0;
+      fill(primo?velo(P_ACC,P_CARD,.07):P_CARD);
+      draw(primo?velo(P_ACC,P_BG,.35):P_BORD);doc.setLineWidth(.4);
+      doc.roundedRect(x,y,w,h,3,3,"FD");
+      set("bold",primo?P_ACC:P_MUT);doc.setFontSize(9);
+      doc.text(["1°","2°","3°"][i],x+5,y+8);
+      tondo(x+w/2,y+19,11,p);
+      set("bold",P_TXT);doc.setFontSize(10.5);
+      doc.text(taglia(p.name,w-8),x+w/2,y+37,{align:"center"});
+      set("bold",primo?P_ACC:P_TXT);doc.setFontSize(17);
+      doc.text(p.stats.avg.toFixed(2),x+w/2,y+46,{align:"center"});
+      set("normal",P_MUT);doc.setFontSize(6.5);doc.setCharSpace(.6);
+      doc.text("MEDIA",x+w/2,y+50,{align:"center"});doc.setCharSpace(0);
+    });
+    y+=h+10;
+  }
+
+  /* ── la tabella ── */
+  const CX={P:133,V:145,GOL:157,MVP:170,MEDIA:187};
+  const testata=yy=>{
+    set("bold",P_MUT);doc.setFontSize(7);doc.setCharSpace(.5);
+    doc.text("#",20,yy,{align:"center"});
+    doc.text("GIOCATORE",37,yy);
+    Object.keys(CX).forEach(k=>doc.text(k,CX[k],yy,{align:"center"}));
+    doc.setCharSpace(0);
+  };
+  testata(y);y+=4;
+
+  const manuale=standings.some(p=>FIELDS.some(f=>p.stats.base[f]!==0));
+  standings.forEach((p,i)=>{
+    if(y>272){y=nuovaPagina();testata(y);y+=4;}
+    const s=p.stats,primo=i===0,ultimo=i===standings.length-1&&standings.length>1;
+    fill(primo?velo(P_ACC,P_CARD,.08):ultimo?velo(P_RED,P_CARD,.06):P_CARD);
+    draw(primo?velo(P_ACC,P_BG,.3):P_BORD);doc.setLineWidth(.3);
+    doc.roundedRect(M,y,R-M,10,2.5,2.5,"FD");
+    set("bold",primo?P_ACC:P_MUT);doc.setFontSize(9);
+    doc.text(String(i+1),20,y+6.6,{align:"center"});
+    tondo(30,y+5,3.6,p);
+    set("bold",P_TXT);doc.setFontSize(10);
+    doc.text(taglia(p.name,88),37,y+6.6);
+    set("normal",P_TXT);doc.setFontSize(9.5);
+    [["P","presences"],["V","wins"],["GOL","goals"],["MVP","mvps"]].forEach(([k,f])=>{
+      doc.text(String(s[f])+(s.base[f]!==0?"*":""),CX[k],y+6.6,{align:"center"});
+    });
+    set("bold",P_ACC);doc.setFontSize(11);
+    doc.text(s.avg.toFixed(2),CX.MEDIA,y+6.6,{align:"center"});
+    y+=11;
+  });
+
+  /* ── i numeri della stagione ── */
+  const golTot=standings.reduce((n,p)=>n+p.stats.goals,0);
+  const meglio=f=>standings.slice().sort((a,b)=>b.stats[f]-a.stats[f])[0];
+  const bomber=meglio("goals"),stella=meglio("mvps");
+  if(y>232){y=nuovaPagina();}
+  y+=6;
+  set("bold",P_MUT);doc.setFontSize(7);doc.setCharSpace(.8);
+  doc.text("IN NUMERI",M,y);doc.setCharSpace(0);
+  y+=3;
+  const bw=(R-M-15)/4;
+  [["PARTITE",String((matches||[]).length),"registrate"],
+   ["GOL",String(golTot),"segnati in tutto"],
+   ["MIGLIOR MARCATORE",bomber&&bomber.stats.goals>0?String(bomber.stats.goals):"—",bomber&&bomber.stats.goals>0?bomber.name:"nessun gol ancora"],
+   ["PIÙ MVP",stella&&stella.stats.mvps>0?String(stella.stats.mvps):"—",stella&&stella.stats.mvps>0?stella.name:"nessun MVP ancora"]
+  ].forEach(([lab,val,sub],i)=>{
+    const x=M+i*(bw+5);
+    fill(P_CARD2);draw(P_BORD);doc.setLineWidth(.3);
+    doc.roundedRect(x,y,bw,23,2.5,2.5,"FD");
+    set("normal",P_MUT);doc.setFontSize(6.2);
+    doc.text(taglia(lab,bw-6),x+4,y+6);
+    set("bold",P_ACC);doc.setFontSize(15);
+    doc.text(val,x+4,y+15);
+    set("normal",P_MUT);doc.setFontSize(6.8);
+    doc.text(taglia(sub,bw-6),x+4,y+20);
+  });
+  y+=30;
+
+  set("normal",P_MUT);doc.setFontSize(7.5);
+  doc.text("3 punti per vittoria · media = punti ÷ presenze · il pareggio non esiste",W/2,y,{align:"center"});
+  if(manuale)doc.text("* valore corretto a mano sopra il calcolo delle partite",W/2,y+4.5,{align:"center"});
+
+  /* ── le altre due classifiche, una per colonna ── */
+  const classifichina=(x,y0,w,titolo,sub,campo,righe)=>{
+    set("bold",P_ACC);doc.setFontSize(11);doc.setCharSpace(1.4);
+    doc.text(titolo,x,y0);doc.setCharSpace(0);
+    set("normal",P_MUT);doc.setFontSize(7);
+    doc.text(sub,x,y0+4.6);
+    let yy=y0+9;
+    if(!righe.length){
+      fill(P_CARD);draw(P_BORD);doc.setLineWidth(.3);
+      doc.roundedRect(x,yy,w,13,2.5,2.5,"FD");
+      set("normal",P_MUT);doc.setFontSize(8);
+      doc.text("Ancora nessuno",x+w/2,yy+7.8,{align:"center"});
+      return;
+    }
+    righe.forEach((p,i)=>{
+      const primo=i===0;
+      fill(primo?velo(P_ACC,P_CARD,.08):P_CARD);
+      draw(primo?velo(P_ACC,P_BG,.3):P_BORD);doc.setLineWidth(.3);
+      doc.roundedRect(x,yy,w,9.5,2.2,2.2,"FD");
+      set("bold",primo?P_ACC:P_MUT);doc.setFontSize(8);
+      doc.text(String(i+1),x+5,yy+6.3,{align:"center"});
+      tondo(x+14,yy+4.75,3.2,p);
+      set("bold",P_TXT);doc.setFontSize(9.5);
+      doc.text(taglia(p.name,w-40),x+19.5,yy+6.3);
+      set("bold",primo?P_ACC:P_TXT);doc.setFontSize(12);
+      doc.text(String(p.stats[campo]),x+w-5,yy+6.3,{align:"right"});
+      yy+=10.5;
+    });
+  };
+  const top=(vista,campo)=>ordinaPer(standings,vista).filter(p=>p.stats[campo]>0).slice(0,15);
+  const gol=top("marcatori","goals"),mvp=top("mvp","mvps");
+  /* se il foglio ha ancora spazio restano qui: un gruppo piccolo merita una
+     pagina sola, non due mezze vuote */
+  const serve=13+Math.max(gol.length,mvp.length,1)*10.5;
+  const y3=(y+14+serve<276)?(y+10):nuovaPagina();
+  const cw=(R-M-10)/2;
+  classifichina(M,      y3+4,cw,"MARCATORI","Chi ha segnato di più","goals",top("marcatori","goals"));
+  classifichina(M+cw+10,y3+4,cw,"MVP","Chi è stato eletto migliore più volte","mvps",top("mvp","mvps"));
+  piede();
+
+  /* numerazione: quante pagine sono si sa solo alla fine */
+  const n=doc.getNumberOfPages();
+  if(n>1)for(let i=1;i<=n;i++){
+    doc.setPage(i);
+    set("normal",P_MUT);doc.setFontSize(7);
+    doc.text("pagina "+i+" di "+n,R,288,{align:"right"});
+  }
+  return doc;
+}
+
+async function esportaClassifica(standings,matches,gruppo){
+  const jsPDF=await loadJsPDF();
+  const foto={};
+  for(const p of standings){const t=await fotoTonda(p.photo,220);if(t)foto[p.id]=t;}
+  const doc=pdfClassifica(jsPDF,{standings,matches,gruppo,foto});
+  const slug=String(gruppo||"gruppo").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"")||"gruppo";
+  const nome="classifica-"+slug+"-"+isoDate(new Date())+".pdf";
+  const blob=doc.output("blob");
+  /* sul telefono la cosa utile è mandarla nel gruppo, non salvarla nei file */
+  try{
+    const file=new File([blob],nome,{type:"application/pdf"});
+    if(navigator.canShare&&navigator.canShare({files:[file]})){
+      await navigator.share({files:[file],title:"Classifica "+gruppo});
+      return "condivisa";
+    }
+  }catch(e){ if(e&&e.name==="AbortError")return "annullata"; }
+  doc.save(nome);
+  return "salvata";
+}
+
+function StandingsSection({standings,matches,gruppo,isAdmin,updatePlayers,capId,pickId,say}){
   const [editId,setEditId]=useState(null), [ev,setEv]=useState({}), [busy,setBusy]=useState(false);
+  const [pdf,setPdf]=useState(false);
+  const [vista,setVista]=useState("generale");
+  const V=vistaDi(vista);
+  const lista=useMemo(()=>ordinaPer(standings,vista),[standings,vista]);
+  const tuttiZero=vista!=="generale"&&lista.every(p=>p.stats[V.campo]===0);
   const narrow=useNarrow();
   const startEdit=p=>{setEditId(p.id);setEv({presences:p.stats.presences,wins:p.stats.wins,goals:p.stats.goals,mvps:p.stats.mvps});};
   const toAuto=p=>setEv({presences:p.stats.auto.presences,wins:p.stats.auto.wins,goals:p.stats.auto.goals,mvps:p.stats.auto.mvps});
@@ -750,6 +1029,18 @@ function StandingsSection({standings,isAdmin,updatePlayers,capId,pickId}){
     setBusy(false);setEditId(null);
   };
 
+  const esporta=async()=>{
+    if(pdf)return;
+    setPdf(true);
+    try{
+      const esito=await esportaClassifica(standings,matches,gruppo);
+      if(esito==="salvata")say("Classifica scaricata");
+    }catch(e){
+      say(String(e&&e.message)==="rete"?"Serve la rete per preparare il PDF la prima volta":"PDF non riuscito");
+    }
+    setPdf(false);
+  };
+
   const MEDALS=["🥇","🥈","🥉"];
   const cols="30px 1fr 38px 38px 38px 38px 54px"+(isAdmin?" 32px":"");
   const manual=standings.some(p=>FIELDS.some(f=>p.stats.base[f]!==0));
@@ -759,24 +1050,37 @@ function StandingsSection({standings,isAdmin,updatePlayers,capId,pickId}){
 
   return(
     <div>
-      <Banner title="CLASSIFICA" sub="3 punti per vittoria · media = punti ÷ presenze"/>
+      <Banner title="CLASSIFICA" sub={V.sub}/>
       {standings.length===0?<Empty emoji="🏆" text="Nessun giocatore. Aggiungili dalla sezione Rosa (admin)!"/>:(
         <>
+          <div style={{display:"flex",gap:6,marginBottom:16}}>
+            {VISTE.map(v=>(
+              <button key={v.k} onClick={()=>setVista(v.k)}
+                style={{flex:1,padding:"11px 4px",borderRadius:10,cursor:"pointer",fontFamily:"'Bebas Neue',sans-serif",fontSize:16,letterSpacing:1.5,
+                        border:`2px solid ${vista===v.k?C.accent:C.border}`,background:vista===v.k?C.accent+"15":C.card2,
+                        color:vista===v.k?C.accent:C.muted,transition:"all .15s"}}>{v.lab}</button>
+            ))}
+          </div>
+          {tuttiZero&&<div style={{fontSize:12,color:C.muted,textAlign:"center",marginBottom:14}}>{V.vuoto}</div>}
           {!narrow&&(
             <div style={{display:"grid",gridTemplateColumns:cols,gap:4,padding:"0 10px 8px"}}>
-              {["#","Giocatore","P","V","GOL","MVP","MEDIA",...(isAdmin?[""]:[])].map((h,i)=>(
+              {["#","Giocatore","P","V","GOL","MVP",V.etichetta.toUpperCase(),...(isAdmin?[""]:[])].map((h,i)=>(
                 <div key={i} style={{fontSize:9,color:C.muted,fontWeight:700,letterSpacing:.8,textAlign:i===1?"left":"center"}}>{h}</div>
               ))}
             </div>
           )}
-          {standings.map((p,i)=>{
-            const isFirst=i===0, isLast=i===standings.length-1&&standings.length>1, isEd=editId===p.id, s=p.stats;
+          {lista.map((p,i)=>{
+            /* la maglia nera ha senso solo nella generale: nei gol l'ultimo è
+               semplicemente uno che non ha ancora segnato */
+            const isFirst=i===0, isLast=vista==="generale"&&i===lista.length-1&&lista.length>1, isEd=editId===p.id, s=p.stats;
             const isCap=p.id===capId, isPick=p.id===pickId;
             const frame={background:isFirst?`${C.accent}0D`:isLast?`${C.red}0A`:C.card,border:`1px solid ${isFirst?C.accent+"35":isLast?C.red+"30":C.border}`,borderRadius:12,marginBottom:6,overflow:"hidden"};
             const pos=<div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,color:i<3?C.accent:C.muted,textAlign:"center",width:narrow?22:undefined,flexShrink:0}}>{MEDALS[i]||i+1}</div>;
-            const avg=<div style={{textAlign:"center",flexShrink:0}}>
-                <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,color:isFirst?C.accent:C.text,lineHeight:1}}>{s.avg.toFixed(2)}</div>
-                <div style={{fontSize:9,color:C.muted}}>media</div>
+            const avg=<div style={{textAlign:"center",flexShrink:0,minWidth:34}}>
+                <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,color:isFirst?C.accent:C.text,lineHeight:1}}>
+                  {vista==="generale"?s.avg.toFixed(2):s[V.campo]}
+                </div>
+                <div style={{fontSize:9,color:C.muted}}>{V.etichetta}</div>
               </div>;
             const editBtn=isAdmin&&(isEd
               ?<Btn onClick={()=>saveEdit(p)} disabled={busy} small style={{padding:"5px 8px"}}>✓</Btn>
@@ -840,6 +1144,13 @@ function StandingsSection({standings,isAdmin,updatePlayers,capId,pickId}){
             );
           })}
           {manual&&<div style={{fontSize:11,color:C.muted,textAlign:"center",marginTop:12}}>✎ = valore con una correzione manuale sopra il calcolo delle partite</div>}
+          <Btn onClick={esporta} disabled={pdf} variant="ghost" full
+               style={{marginTop:16,padding:"13px 0",borderRadius:10,fontSize:14,color:C.accent,border:`1px solid ${C.accent}40`}}>
+            {pdf?"Preparo il foglio…":"⬇︎ Esporta la classifica in PDF"}
+          </Btn>
+          <div style={{fontSize:11,color:C.muted,textAlign:"center",marginTop:8,lineHeight:1.5}}>
+            Un foglio con foto, podio e statistiche, pronto da mandare nel gruppo.
+          </div>
         </>
       )}
     </div>
@@ -1731,6 +2042,7 @@ function PlayersSection({players,matches,isAdmin,myPlayerId,updatePlayers,setPho
   const [editId,setEditId]=useState(null), [editName,setEditName]=useState(""), [editVals,setEditVals]=useState({});
   const [busy,setBusy]=useState(false), [delP,setDelP]=useState(null), [delSicuro,setDelSicuro]=useState(false);
   const [imp,setImp]=useState(null), [impErr,setImpErr]=useState("");
+  const [fotoId,setFotoId]=useState(null), [fotoBusy,setFotoBusy]=useState(false);
   const newPhotoRef=useRef(null), xlsRef=useRef(null);
 
   const submitAdd=async()=>{
@@ -1835,15 +2147,14 @@ function PlayersSection({players,matches,isAdmin,myPlayerId,updatePlayers,setPho
             <div key={p.id} style={{background:C.card,border:`1px solid ${p.id===myPlayerId?C.accent+"40":C.border}`,borderRadius:14,padding:16,marginBottom:10}}>
               <div style={{display:"flex",gap:14,alignItems:"center"}}>
                 <div style={{position:"relative",flexShrink:0}}>
-                  {canEdit(p)?(
-                    <>
-                      <label htmlFor={`ph-${p.id}`} style={{cursor:"pointer",display:"block"}}>
-                        <Avatar player={p} size={58}/>
-                        <div style={{position:"absolute",bottom:-2,right:-2,background:C.accent,borderRadius:"50%",width:20,height:20,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10}}>📷</div>
-                      </label>
-                      <input id={`ph-${p.id}`} type="file" accept="image/*" style={{display:"none"}} onChange={async e=>{const f=e.target.files[0];e.target.value="";if(f)await setPhoto(p.id,f);}}/>
-                    </>
-                  ):<Avatar player={p} size={58}/>}
+                  {/* un tocco sulla foto la apre grande: cambiarla è un passo dopo,
+                      dentro la scheda, non un file che si apre per sbaglio */}
+                  <div onClick={()=>setFotoId(p.id)} role="button" aria-label={"Foto di "+p.name} style={{cursor:"pointer"}}>
+                    <Avatar player={p} size={58}/>
+                    {canEdit(p)&&<div style={{position:"absolute",bottom:-2,right:-2,background:C.accent,borderRadius:"50%",width:20,height:20,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10}}>📷</div>}
+                  </div>
+                  {canEdit(p)&&<input id={`ph-${p.id}`} type="file" accept="image/*" style={{display:"none"}}
+                    onChange={async e=>{const f=e.target.files[0];e.target.value="";if(!f)return;setFotoBusy(true);await setPhoto(p.id,f);setFotoBusy(false);}}/>}
                 </div>
                 <div style={{flex:1,minWidth:0}}>
                   {canEdit(p)&&isEd
@@ -1888,6 +2199,41 @@ function PlayersSection({players,matches,isAdmin,myPlayerId,updatePlayers,setPho
           );
         })
       }
+
+      {/* la foto in grande: si apre da un tocco sull'avatar in rosa */}
+      {(()=>{
+        const p=(players||[]).find(x=>x.id===fotoId);
+        if(!p)return null;
+        const s=computeStats(p,matches);
+        const col=["#FF6B6B","#4ECDC4","#45B7D1","#A78BFA","#F59E0B","#34D399","#F472B6","#60A5FA"][(p.name?.charCodeAt(0)||0)%8];
+        return(
+          <Modal onClose={()=>setFotoId(null)}>
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:24,letterSpacing:2,color:C.text,lineHeight:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{p.name.toUpperCase()}</div>
+                <div style={{fontSize:11,color:C.muted,marginTop:3}}>Media {s.avg.toFixed(2)} · {s.presences} presenze · {s.goals} gol</div>
+              </div>
+              {canEdit(p)&&(
+                <label htmlFor={`ph-${p.id}`} style={{cursor:"pointer",flexShrink:0,fontSize:12,fontWeight:700,color:C.accent,
+                        border:`1px solid ${C.accent}50`,borderRadius:8,padding:"7px 12px",fontFamily:"'DM Sans',sans-serif"}}>
+                  {fotoBusy?"Carico…":p.photo?"Modifica":"Aggiungi foto"}
+                </label>
+              )}
+            </div>
+            {p.photo
+              ?<img src={p.photo} alt={p.name} style={{width:"100%",maxHeight:"58vh",objectFit:"cover",borderRadius:14,border:`1px solid ${C.border}`,display:"block"}}/>
+              :<div style={{width:"100%",aspectRatio:"1",maxHeight:"58vh",borderRadius:14,background:col+"18",border:`1px solid ${col}45`,
+                            display:"flex",alignItems:"center",justifyContent:"center",fontSize:96,fontWeight:800,color:col}}>{p.name[0].toUpperCase()}</div>}
+            <div style={{display:"flex",gap:8,marginTop:14}}>
+              <Btn onClick={()=>setFotoId(null)} variant="ghost" style={{flex:1}}>Chiudi</Btn>
+              {canEdit(p)&&p.photo&&<Btn onClick={async()=>{setFotoBusy(true);await setPhoto(p.id,null);setFotoBusy(false);}} disabled={fotoBusy} variant="danger" style={{flex:1}}>Togli la foto</Btn>}
+            </div>
+            {canEdit(p)&&<div style={{fontSize:11,color:C.muted,marginTop:10,lineHeight:1.5,textAlign:"center"}}>
+              Da "{p.photo?"Modifica":"Aggiungi foto"}" scegli se scattarla sul momento o prenderla dalle foto del telefono.
+            </div>}
+          </Modal>
+        );
+      })()}
 
       {delP&&!delSicuro&&(
         <Modal onClose={()=>setDelP(null)}>
@@ -2420,7 +2766,8 @@ function CialtronApp(){
       </nav>
 
       <main style={{maxWidth:700,margin:"0 auto",padding:"22px 14px 100px"}}>
-        {tab==="standings"&&<StandingsSection standings={standings} isAdmin={isAdmin} updatePlayers={updatePlayers} capId={capId} pickId={pickId}/>}
+        {tab==="standings"&&<StandingsSection standings={standings} matches={matches} gruppo={group.name} say={say}
+                              isAdmin={isAdmin} updatePlayers={updatePlayers} capId={capId} pickId={pickId}/>}
         {tab==="callup"   &&<CallupSection players={playersView} board={board} matchDate={matchDate} members={members} myPlayerId={myPlayerId} say={say}
                               setCallup={(pid,v)=>setCallup(pid,v,matchIso)} setSettings={setSettings}/>}
         {tab==="match"    &&<MatchSection players={playersView} matches={matches} isAdmin={isAdmin} saveMatches={saveMatches}
