@@ -56,7 +56,7 @@ const C={accent:"#B8FF00",bg:"#090909",card:"#111",card2:"#1A1A1A",card3:"#222",
 /* Versione pubblicata: confrontata con version.json per avvisare che c'è
    un aggiornamento. Sul telefono la pagina resta in cache, senza questo
    controllo le modifiche non arriverebbero finché non si svuota la cache. */
-const APP_VERSION="2026-09-15.3";
+const APP_VERSION="2026-09-15.4";
 
 function useUpdateCheck(){
   const [next,setNext]=useState(null);
@@ -1017,12 +1017,15 @@ const MESI=["gennaio","febbraio","marzo","aprile","maggio","giugno","luglio","ag
 
 const isoDate=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 
+const GIORNO_PARTITA=4;   // giovedì
+const GIORNO_AVVISO=0;    // domenica: da qui in poi si chiede "ci sei?"
+
 /* La prossima partita: il primo giorno buono da oggi in avanti. Se oggi è il
    giorno ma l'ora è passata da un pezzo, si guarda già alla settimana dopo:
    una convocazione per una partita già giocata non serve a nessuno. */
 function nextMatch(settings){
   const s=settings||{};
-  const day=Number.isInteger(s.matchDay)?s.matchDay:0;
+  const day=Number.isInteger(s.matchDay)?s.matchDay:GIORNO_PARTITA;
   const now=new Date();
   const d=new Date(now.getFullYear(),now.getMonth(),now.getDate());
   let diff=(day-d.getDay()+7)%7;
@@ -1035,6 +1038,20 @@ function nextMatch(settings){
   return d;
 }
 const dataLunga=d=>`${GIORNI[d.getDay()]} ${d.getDate()} ${MESI[d.getMonth()]}`;
+
+/* Quando comincia a girare la domanda "ci sei?": dal giorno d'avviso della
+   settimana che porta alla partita. Prima di quello la partita è ancora
+   lontana e chiederlo servirebbe solo a farsi rispondere "boh". */
+function avvisoAperto(settings,adesso){
+  const s=settings||{};
+  const giorno=Number.isInteger(s.openDay)?s.openDay:GIORNO_AVVISO;
+  const m=nextMatch(s);
+  const apertura=new Date(m);
+  const indietro=((m.getDay()-giorno+7)%7)||7;
+  apertura.setDate(m.getDate()-indietro);
+  apertura.setHours(0,0,0,0);
+  return (adesso||new Date())>=apertura;
+}
 
 function CallupSection({players,board,matchDate,setCallup,setSettings,myPlayerId,members,say}){
   const [conf,setConf]=useState(false);
@@ -1102,13 +1119,21 @@ function CallupSection({players,board,matchDate,setCallup,setSettings,myPlayerId
           <div style={{borderTop:`1px solid ${C.border}`,marginTop:14,paddingTop:14}}>
             <div style={{fontSize:11,color:C.muted,marginBottom:8}}>Che giorno si gioca</div>
             <div style={{display:"flex",gap:4,marginBottom:14,flexWrap:"wrap"}}>
-              {GIORNI_BREVI.map((g,i)=>(
-                <button key={i} onClick={()=>setSettings({matchDay:i})}
+              {GIORNI_BREVI.map((g,i)=>{
+                const sel=(Number.isInteger(s.matchDay)?s.matchDay:GIORNO_PARTITA)===i;
+                return <button key={i} onClick={()=>setSettings({matchDay:i})}
                   style={{flex:"1 0 44px",padding:"9px 0",borderRadius:8,cursor:"pointer",fontWeight:800,fontSize:11,fontFamily:"'DM Sans',sans-serif",
-                          border:`2px solid ${(Number.isInteger(s.matchDay)?s.matchDay:0)===i?C.accent:C.border}`,
-                          background:(Number.isInteger(s.matchDay)?s.matchDay:0)===i?C.accent+"18":C.card2,
-                          color:(Number.isInteger(s.matchDay)?s.matchDay:0)===i?C.accent:C.muted}}>{g}</button>
-              ))}
+                          border:`2px solid ${sel?C.accent:C.border}`,background:sel?C.accent+"18":C.card2,color:sel?C.accent:C.muted}}>{g}</button>;
+              })}
+            </div>
+            <div style={{fontSize:11,color:C.muted,marginBottom:8}}>Da che giorno parte l'avviso "ci sei?"</div>
+            <div style={{display:"flex",gap:4,marginBottom:14,flexWrap:"wrap"}}>
+              {GIORNI_BREVI.map((g,i)=>{
+                const sel=(Number.isInteger(s.openDay)?s.openDay:GIORNO_AVVISO)===i;
+                return <button key={i} onClick={()=>setSettings({openDay:i})}
+                  style={{flex:"1 0 44px",padding:"9px 0",borderRadius:8,cursor:"pointer",fontWeight:800,fontSize:11,fontFamily:"'DM Sans',sans-serif",
+                          border:`2px solid ${sel?C.blue||C.accent:C.border}`,background:sel?(C.blue||C.accent)+"18":C.card2,color:sel?(C.blue||C.accent):C.muted}}>{g}</button>;
+              })}
             </div>
             <div style={{fontSize:11,color:C.muted,marginBottom:8}}>A che ora</div>
             <div style={{display:"flex",gap:8}}>
@@ -1177,8 +1202,9 @@ const isExt=id=>/^ext\d+$/.test(String(id||""));
 const extName=id=>"Esterno "+String(id).slice(3);
 const extPlayer=id=>({id,name:extName(id),ext:true});
 
-function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capId,pickId,capManual,pickManual,setSettings,availableIds,playAll,onUseTeams}){
+function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capId,pickId,capManual,pickManual,setSettings,availableIds,playAll,onUseTeams,onAggiungi}){
   const [scegli,setScegli]=useState(false);
+  const [agg,setAgg]=useState(false);
 
   const hasCap=standings.length>=2&&capId&&pickId;
   const captain=hasCap?standings.find(p=>p.id===capId):null;
@@ -1203,6 +1229,7 @@ function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capI
      chiamare le squadre a qualcuno che magari nemmeno gioca. */
   const disponibili=standings.filter(p=>(availableIds||[]).indexOf(p.id)>=0);
   const baseIds=(eligible||standings).map(p=>p.id);
+  const fuori=standings.filter(p=>baseIds.indexOf(p.id)<0);   // chi non è ancora in campo
   const inGioco=baseIds.concat(Array.from({length:extN},(_,i)=>"ext"+(i+1)));
 
   const nomina=(ruolo,id)=>{
@@ -1340,6 +1367,25 @@ function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capI
               {extN>0&&<span style={{color:C.muted}}> · di cui {extN} esterni</span>}
               {inGioco.length%2!==0&&<span style={{color:C.red}}> · siete in numero dispari</span>}
             </div>
+            {fuori.length>0&&onAggiungi&&(
+              <>
+                <Btn onClick={()=>setAgg(v=>!v)} variant="ghost" full small style={{marginTop:8}}>
+                  {agg?"Chiudi":`＋ Aggiungi dalla rosa (${fuori.length} fuori)`}
+                </Btn>
+                {agg&&(
+                  <div style={{marginTop:8}}>
+                    <div style={{fontSize:11,color:C.muted,marginBottom:8,lineHeight:1.5}}>Chi si è dimenticato di rispondere o si è deciso all'ultimo: toccalo e finisce dentro.</div>
+                    {fuori.map(p=>(
+                      <div key={p.id} style={{display:"flex",alignItems:"center",gap:9,padding:"7px 0",borderBottom:`1px solid ${C.border}`}}>
+                        <Avatar player={p} size={28}/>
+                        <span style={{flex:1,fontSize:13,color:C.text,fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{p.name}</span>
+                        <Btn onClick={()=>onAggiungi(p.id)} variant="dark" small>＋ gioca</Btn>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
             {BtnEsterno}
             {disponibili.length<2&&<div style={{fontSize:11,color:C.muted,marginTop:8,lineHeight:1.5}}>Nessuno ha ancora risposto alla convocazione: si gioca con tutta la rosa.</div>}
           </div>
@@ -2064,6 +2110,15 @@ function CialtronApp(){
   },[standings,availableIds,board.settings.playAll]);
   const {capId,pickId,capManual,pickManual}=useMemo(()=>rolesOf(eligible,board.settings),[eligible,board.settings]);
   const rispostaMia=myPlayerId?((board.callups[matchIso]||{})[myPlayerId]||{}).v:null;
+  /* di chi è il turno adesso, per la barra in cima */
+  const selPicks=(teamSel&&teamSel.picks)||[];
+  const selFase=teamSel&&teamSel.phase;
+  const mioTurnoChiamata=selFase==="draft"&&!!myPlayerId&&
+    ((selPicks.length%2===0&&myPlayerId===pickId)||(selPicks.length%2===1&&myPlayerId===capId));
+  const mioTurnoLato=selFase==="captain"&&!!myPlayerId&&myPlayerId===capId;
+  const restantiN=selFase==="draft"?((teamSel.pool||[]).length-selPicks.length-2):0;
+  const chiedeCiSei=!!myPlayerId&&!rispostaMia&&players.length>0&&avvisoAperto(board.settings);
+
   const usaSquadre=useCallback((w,b)=>{setPrefill({white:w,black:b});setTab("match");say("Squadre portate nella registrazione");},[say]);
   const prefillUsato=useCallback(()=>setPrefill(null),[]);
 
@@ -2119,9 +2174,26 @@ function CialtronApp(){
         </div>
       )}
 
-      {/* Al posto della notifica che un'app così non può mandare: finché non hai
-          risposto per la partita in arrivo, la domanda ti segue su ogni schermata. */}
-      {myPlayerId&&!rispostaMia&&players.length>0&&(
+      {/* Al posto delle notifiche, che un'app così non può mandare: quello che
+          aspetta te sta in cima a ogni schermata finché non lo risolvi.
+          Uno alla volta, il più urgente. */}
+      {mioTurnoChiamata?(
+        <div style={{background:C.red+"1A",borderBottom:`1px solid ${C.red}45`,padding:"10px 16px",display:"flex",alignItems:"center",gap:10}}>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:13,color:C.text,fontWeight:800}}>Tocca a te chiamare</div>
+            <div style={{fontSize:11,color:C.muted}}>{restantiN} ancora da scegliere</div>
+          </div>
+          <button onClick={()=>setTab("teams")} style={{padding:"9px 14px",borderRadius:9,border:"none",background:C.red,color:"#fff",fontWeight:800,fontSize:13,fontFamily:"'DM Sans',sans-serif",cursor:"pointer"}}>Scegli →</button>
+        </div>
+      ):mioTurnoLato?(
+        <div style={{background:C.accent+"1A",borderBottom:`1px solid ${C.accent}45`,padding:"10px 16px",display:"flex",alignItems:"center",gap:10}}>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:13,color:C.text,fontWeight:800}}>Le squadre sono pronte</div>
+            <div style={{fontSize:11,color:C.muted}}>Scegli con quale giocare</div>
+          </div>
+          <button onClick={()=>setTab("teams")} style={{padding:"9px 14px",borderRadius:9,border:"none",background:C.accent,color:"#000",fontWeight:800,fontSize:13,fontFamily:"'DM Sans',sans-serif",cursor:"pointer"}}>Scegli →</button>
+        </div>
+      ):chiedeCiSei?(
         <div style={{background:C.card2,borderBottom:`1px solid ${C.accent}35`,padding:"10px 16px",display:"flex",alignItems:"center",gap:10}}>
           <div style={{flex:1,minWidth:0}}>
             <div style={{fontSize:13,color:C.text,fontWeight:700}}>{dataLunga(matchDate)}: ci sei?</div>
@@ -2130,7 +2202,7 @@ function CialtronApp(){
           <button onClick={()=>setCallup(myPlayerId,"si",matchIso)} style={{padding:"9px 14px",borderRadius:9,border:"none",background:C.green,color:"#04210F",fontWeight:800,fontSize:13,fontFamily:"'DM Sans',sans-serif",cursor:"pointer"}}>✓ Sì</button>
           <button onClick={()=>setCallup(myPlayerId,"no",matchIso)} style={{padding:"9px 14px",borderRadius:9,border:`2px solid ${C.red}40`,background:"transparent",color:C.red,fontWeight:800,fontSize:13,fontFamily:"'DM Sans',sans-serif",cursor:"pointer"}}>✕ No</button>
         </div>
-      )}
+      ):null}
 
       <nav style={{background:C.card,borderBottom:`1px solid ${C.border}`,display:"flex",overflowX:"auto",padding:"0 2px"}}>
         {NAV.map(n=>(
@@ -2150,7 +2222,8 @@ function CialtronApp(){
         {tab==="teams"    &&<TeamsSection standings={standings} teamSel={teamSel} setSel={setSel} myPlayerId={myPlayerId} isAdmin={isAdmin}
                               capId={capId} pickId={pickId} capManual={capManual} pickManual={pickManual} setSettings={setSettings}
                               availableIds={availableIds} eligible={eligible} playAll={!!board.settings.playAll}
-                              onUseTeams={isAdmin?usaSquadre:null}/>}
+                              onUseTeams={isAdmin?usaSquadre:null}
+                              onAggiungi={pid=>setCallup(pid,"si",matchIso)}/>}
         {tab==="players"  &&<PlayersSection players={playersView} matches={matches} isAdmin={isAdmin} myPlayerId={myPlayerId}
                               updatePlayers={updatePlayers} setPhoto={setPhoto} removePlayer={removePlayer}/>}
         <div style={{textAlign:"center",fontSize:10,color:"#3A3A3A",marginTop:28,letterSpacing:1}}>v{APP_VERSION}</div>
