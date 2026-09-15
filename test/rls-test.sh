@@ -14,6 +14,7 @@ PSQL="psql -h ${PGHOST:-/tmp} -p ${PGPORT:-5555} -U ${PGUSER:-app} -d ${PGDATABA
 A=11111111-1111-1111-1111-111111111111   # admin / proprietario
 B=22222222-2222-2222-2222-222222222222   # giocatore
 C=33333333-3333-3333-3333-333333333333   # estraneo
+E=44444444-4444-4444-4444-444444444444   # estraneo vero, non entra mai
 OK=0; KO=0
 as(){ local uid=$1; shift; $PSQL -c "select set_config('request.jwt.claim.sub','$uid',false);" -c "$*" 2>&1 | tail -n +2; }
 ok(){   if [ "$2" == "$3" ]; then echo "  ✓ $1"; OK=$((OK+1)); else echo "  ✗ $1  → atteso [$3] ottenuto [$2]"; KO=$((KO+1)); fi }
@@ -22,7 +23,7 @@ deve_fallire(){ local out; out=$(as "$2" "$3"); if echo "$out"|grep -qi 'errore\
 psql -h ${PGHOST:-/tmp} -p ${PGPORT:-5555} -U ${PGADMIN:-pg} -d ${PGDATABASE:-postgres} -X -q -c "
   truncate groups cascade;
   insert into auth.users(id,email) values
-   ('$A','admin@x.it'),('$B','gioc@x.it'),('$C','estraneo@x.it') on conflict do nothing;"
+   ('$A','admin@x.it'),('$B','gioc@x.it'),('$C','estraneo@x.it'),('$E','fuori@x.it') on conflict do nothing;"
 
 echo "— CREAZIONE GRUPPO —"
 GID=$(as $A "insert into groups(owner,name) values(auth.uid(),'Calcetto del giovedì') returning id;")
@@ -67,6 +68,30 @@ ok "ora la rosa ha due giocatori" "$(as $A "select jsonb_array_length(data->'pla
 ok "e risulta collegato alla sua voce" "$(as $C "select member_name from group_members where group_id='$GID' and user_id=auth.uid();")" "Fede"
 deve_fallire "non si aggiunge un nome già presente" $C "select claim_new_player('$GID','marco');"
 deve_fallire "un estraneo non si aggiunge" $B "select claim_new_player('00000000-0000-0000-0000-000000000000','X');"
+
+echo "— BACHECA: CONVOCAZIONI E CAPITANI —"
+ok "la bacheca nasce col gruppo" "$(as $A "select count(*) from board where group_id='$GID';")" "1"
+ok "un giocatore normale cambia il giorno" "$(as $C "update board set settings='{\"matchDay\":0,\"matchTime\":\"20:30\"}'::jsonb where group_id='$GID'; select settings->>'matchTime' from board where group_id='$GID';")" "20:30"
+ok "un giocatore normale sceglie il capitano" "$(as $C "update board set settings=settings||'{\"captainId\":\"p1\"}'::jsonb where group_id='$GID'; select settings->>'captainId' from board where group_id='$GID';")" "p1"
+# l'estraneo prova a scrivere; la verifica la fa chi la bacheca può leggerla
+as $E "update board set settings='{\"rubato\":true}'::jsonb where group_id='$GID';" >/dev/null 2>&1
+ok "un estraneo non tocca la bacheca" "$(as $A "select (settings ? 'rubato') from board where group_id='$GID';")" "f"
+ok "e non vede nemmeno la bacheca" "$(as $E "select count(*) from board;")" "0"
+deve_fallire "un estraneo non risponde alle convocazioni" $E "select set_callup('$GID','2026-09-20','p1','si');"
+
+D=$(date -u +%Y-%m-%d)
+ok "rispondo alla convocazione" "$(as $C "select set_callup('$GID','$D','p1','si')->'$D'->'p1'->>'v';")" "si"
+ok "risponde anche un altro" "$(as $A "select set_callup('$GID','$D','p9','no')->'$D'->'p9'->>'v';")" "no"
+ok "la prima risposta non viene persa" "$(as $A "select callups->'$D'->'p1'->>'v' from board where group_id='$GID';")" "si"
+ok "si può cambiare idea" "$(as $C "select set_callup('$GID','$D','p1','no')->'$D'->'p1'->>'v';")" "no"
+ok "si può togliere la risposta" "$(as $C "select coalesce(set_callup('$GID','$D','p1','')->'$D'->'p1'->>'v','(vuoto)');")" "(vuoto)"
+ok "resta scritto chi ha risposto" "$(as $A "select (callups->'$D'->'p9'->>'by') = '$A' from board where group_id='$GID';")" "t"
+deve_fallire "risposta senza senso rifiutata" $C "select set_callup('$GID','$D','p9','forse');"
+deve_fallire "data senza senso rifiutata" $C "select set_callup('$GID','domenica','p9','si');"
+VECCHIA=$(date -u -d '120 days ago' +%Y-%m-%d)
+as $A "select set_callup('$GID','$VECCHIA','p9','si');" >/dev/null
+as $A "select set_callup('$GID','$D','p9','si');" >/dev/null
+ok "le convocazioni vecchie vengono potate" "$(as $A "select callups ? '$VECCHIA' from board where group_id='$GID';")" "f"
 
 echo
 echo "=========================="

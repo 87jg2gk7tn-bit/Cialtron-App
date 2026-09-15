@@ -56,7 +56,7 @@ const C={accent:"#B8FF00",bg:"#090909",card:"#111",card2:"#1A1A1A",card3:"#222",
 /* Versione pubblicata: confrontata con version.json per avvisare che c'è
    un aggiornamento. Sul telefono la pagina resta in cache, senza questo
    controllo le modifiche non arriverebbero finché non si svuota la cache. */
-const APP_VERSION="2026-09-15.1";
+const APP_VERSION="2026-09-15.2";
 
 function useUpdateCheck(){
   const [next,setNext]=useState(null);
@@ -726,7 +726,7 @@ function useNarrow(bp=460){
 
 const SHORT={presences:"P",wins:"V",goals:"GOL",mvps:"MVP"};
 
-function StandingsSection({standings,isAdmin,updatePlayers}){
+function StandingsSection({standings,isAdmin,updatePlayers,capId,pickId}){
   const [editId,setEditId]=useState(null), [ev,setEv]=useState({}), [busy,setBusy]=useState(false);
   const narrow=useNarrow();
   const startEdit=p=>{setEditId(p.id);setEv({presences:p.stats.presences,wins:p.stats.wins,goals:p.stats.goals,mvps:p.stats.mvps});};
@@ -762,6 +762,7 @@ function StandingsSection({standings,isAdmin,updatePlayers}){
           )}
           {standings.map((p,i)=>{
             const isFirst=i===0, isLast=i===standings.length-1&&standings.length>1, isEd=editId===p.id, s=p.stats;
+            const isCap=p.id===capId, isPick=p.id===pickId;
             const frame={background:isFirst?`${C.accent}0D`:isLast?`${C.red}0A`:C.card,border:`1px solid ${isFirst?C.accent+"35":isLast?C.red+"30":C.border}`,borderRadius:12,marginBottom:6,overflow:"hidden"};
             const pos=<div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,color:i<3?C.accent:C.muted,textAlign:"center",width:narrow?22:undefined,flexShrink:0}}>{MEDALS[i]||i+1}</div>;
             const avg=<div style={{textAlign:"center",flexShrink:0}}>
@@ -771,7 +772,7 @@ function StandingsSection({standings,isAdmin,updatePlayers}){
             const editBtn=isAdmin&&(isEd
               ?<Btn onClick={()=>saveEdit(p)} disabled={busy} small style={{padding:"5px 8px"}}>✓</Btn>
               :<button onClick={()=>startEdit(p)} style={{background:"none",border:"none",cursor:"pointer",fontSize:14,color:C.muted,padding:4,flexShrink:0}}>✏️</button>);
-            const tags=<div style={{display:"flex",gap:4,marginTop:2}}>{isFirst&&<Tag>CAP</Tag>}{isLast&&<Tag color={C.red}>PICK</Tag>}</div>;
+            const tags=<div style={{display:"flex",gap:4,marginTop:2}}>{isCap&&<Tag>CAP</Tag>}{isPick&&<Tag color={C.red}>PICK</Tag>}</div>;
             const name=<div style={{fontWeight:700,fontSize:14,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{p.name}</div>;
 
             return(
@@ -784,7 +785,7 @@ function StandingsSection({standings,isAdmin,updatePlayers}){
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{display:"flex",alignItems:"center",gap:6,minWidth:0}}>
                         <div style={{minWidth:0,flex:1}}>{name}</div>
-                        {(isFirst||isLast)&&tags}
+                        {(isCap||isPick)&&tags}
                       </div>
                       <div style={{fontSize:11,color:C.muted,marginTop:3,display:"flex",gap:9}}>
                         {FIELDS.map(f=><span key={f}>{SHORT[f]} <strong style={{color:C.text}}>{s[f]}</strong>{s.base[f]!==0&&mark(f)}</span>)}
@@ -991,13 +992,181 @@ function MatchSection({players,matches,isAdmin,saveMatches}){
 }
 
 /* ═══════════════════════════════════════════════════════
+   CONVOCAZIONE — chi c'è alla prossima partita
+   Ci mette mano chiunque: capita che uno lo dica sul gruppo e lo segni
+   un altro. Resta cambiabile fino all'ultimo, perché all'ultimo si cambia.
+═══════════════════════════════════════════════════════ */
+const GIORNI=["Domenica","Lunedì","Martedì","Mercoledì","Giovedì","Venerdì","Sabato"];
+const GIORNI_BREVI=["DOM","LUN","MAR","MER","GIO","VEN","SAB"];
+const MESI=["gennaio","febbraio","marzo","aprile","maggio","giugno","luglio","agosto","settembre","ottobre","novembre","dicembre"];
+
+const isoDate=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+
+/* La prossima partita: il primo giorno buono da oggi in avanti. Se oggi è il
+   giorno ma l'ora è passata da un pezzo, si guarda già alla settimana dopo:
+   una convocazione per una partita già giocata non serve a nessuno. */
+function nextMatch(settings){
+  const s=settings||{};
+  const day=Number.isInteger(s.matchDay)?s.matchDay:0;
+  const now=new Date();
+  const d=new Date(now.getFullYear(),now.getMonth(),now.getDate());
+  let diff=(day-d.getDay()+7)%7;
+  if(diff===0&&s.matchTime){
+    const[h,m]=String(s.matchTime).split(":").map(Number);
+    const fine=new Date(d);fine.setHours((h||0)+3,m||0,0,0);
+    if(now>fine)diff=7;
+  }
+  d.setDate(d.getDate()+diff);
+  return d;
+}
+const dataLunga=d=>`${GIORNI[d.getDay()]} ${d.getDate()} ${MESI[d.getMonth()]}`;
+
+function CallupSection({players,board,matchDate,setCallup,setSettings,myPlayerId,members,say}){
+  const [conf,setConf]=useState(false);
+  const iso=isoDate(matchDate);
+  const risposte=(board&&board.callups&&board.callups[iso])||{};
+  const s=(board&&board.settings)||{};
+  const [ora,setOra]=useState(s.matchTime||"");
+
+  const stato=id=>(risposte[id]&&risposte[id].v)||null;
+  const si=players.filter(p=>stato(p.id)==="si");
+  const no=players.filter(p=>stato(p.id)==="no");
+  const muti=players.filter(p=>!stato(p.id));
+  const io=players.find(p=>p.id===myPlayerId);
+
+  /* "segnato da Marco": solo se l'ha fatto qualcun altro */
+  const chiHaSegnato=id=>{
+    const r=risposte[id];if(!r||!r.by)return null;
+    const m=(members||[]).find(x=>x.user_id===r.by);
+    if(!m||m.player_id===id)return null;
+    const p=players.find(x=>x.id===m.player_id);
+    return (p&&p.name)||m.member_name||null;
+  };
+
+  const Riga=({p})=>{
+    const v=stato(p.id), segnato=chiHaSegnato(p.id);
+    return(
+      <div style={{display:"flex",alignItems:"center",gap:10,background:C.card,border:`1px solid ${p.id===myPlayerId?C.accent+"40":C.border}`,borderRadius:10,padding:"9px 12px",marginBottom:6}}>
+        <Avatar player={p} size={32}/>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontWeight:600,fontSize:14,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+            {p.name}{p.id===myPlayerId&&<span style={{fontSize:9,color:C.accent,fontWeight:800,marginLeft:6,letterSpacing:1}}>TU</span>}
+          </div>
+          {segnato&&<div style={{fontSize:10,color:C.muted,marginTop:1}}>segnato da {segnato}</div>}
+        </div>
+        <div style={{display:"flex",gap:6,flexShrink:0}}>
+          {[["si","✓",C.green],["no","✕",C.red]].map(([val,segno,col])=>(
+            <button key={val} onClick={()=>setCallup(p.id,v===val?"":val)}
+              style={{width:38,height:34,borderRadius:8,cursor:"pointer",fontWeight:800,fontSize:15,fontFamily:"'DM Sans',sans-serif",
+                      border:`2px solid ${v===val?col:C.border}`,background:v===val?col+"22":C.card2,color:v===val?col:C.muted,transition:"all .15s"}}>
+              {segno}
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  return(
+    <div>
+      <Banner title="CI SEI?" sub="La convocazione la può sistemare chiunque, fino all'ultimo"/>
+
+      <div style={{background:C.card,border:`1px solid ${C.accent}30`,borderRadius:14,padding:16,marginBottom:16}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:10,color:C.muted,letterSpacing:1,marginBottom:3}}>PROSSIMA PARTITA</div>
+            <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:26,letterSpacing:1,color:C.accent,lineHeight:1.1}}>
+              {dataLunga(matchDate).toUpperCase()}
+            </div>
+            {s.matchTime&&<div style={{fontSize:12,color:C.muted,marginTop:2}}>ore {s.matchTime}</div>}
+          </div>
+          <Btn onClick={()=>setConf(c=>!c)} variant="ghost" small>{conf?"Chiudi":"Modifica"}</Btn>
+        </div>
+
+        {conf&&(
+          <div style={{borderTop:`1px solid ${C.border}`,marginTop:14,paddingTop:14}}>
+            <div style={{fontSize:11,color:C.muted,marginBottom:8}}>Che giorno si gioca</div>
+            <div style={{display:"flex",gap:4,marginBottom:14,flexWrap:"wrap"}}>
+              {GIORNI_BREVI.map((g,i)=>(
+                <button key={i} onClick={()=>setSettings({matchDay:i})}
+                  style={{flex:"1 0 44px",padding:"9px 0",borderRadius:8,cursor:"pointer",fontWeight:800,fontSize:11,fontFamily:"'DM Sans',sans-serif",
+                          border:`2px solid ${(Number.isInteger(s.matchDay)?s.matchDay:0)===i?C.accent:C.border}`,
+                          background:(Number.isInteger(s.matchDay)?s.matchDay:0)===i?C.accent+"18":C.card2,
+                          color:(Number.isInteger(s.matchDay)?s.matchDay:0)===i?C.accent:C.muted}}>{g}</button>
+              ))}
+            </div>
+            <div style={{fontSize:11,color:C.muted,marginBottom:8}}>A che ora</div>
+            <div style={{display:"flex",gap:8}}>
+              <input value={ora} onChange={e=>setOra(e.target.value)} placeholder="20:30" inputMode="numeric"
+                style={{flex:1,background:C.card2,border:`1px solid ${C.border}`,color:C.text,borderRadius:8,padding:"10px 14px",fontSize:14,fontFamily:"'DM Sans',sans-serif"}}/>
+              <Btn onClick={()=>{setSettings({matchTime:ora.trim()});say("Orario aggiornato");}} variant="dark">Salva</Btn>
+            </div>
+            <div style={{fontSize:11,color:C.muted,marginTop:10,lineHeight:1.5}}>Vale per tutti: lo può cambiare chiunque nel gruppo.</div>
+          </div>
+        )}
+      </div>
+
+      {io&&!stato(io.id)&&(
+        <div style={{background:C.accent+"12",border:`1px solid ${C.accent}35`,borderRadius:14,padding:16,marginBottom:16,textAlign:"center"}}>
+          <div style={{fontSize:14,color:C.text,fontWeight:700,marginBottom:12}}>Allora {io.name}, ci sei?</div>
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={()=>setCallup(io.id,"si")} style={{flex:1,padding:"14px 0",borderRadius:10,cursor:"pointer",border:"none",background:C.green,color:"#04210F",fontWeight:800,fontSize:15,fontFamily:"'DM Sans',sans-serif"}}>✓ CI SONO</button>
+            <button onClick={()=>setCallup(io.id,"no")} style={{flex:1,padding:"14px 0",borderRadius:10,cursor:"pointer",border:`2px solid ${C.red}40`,background:"transparent",color:C.red,fontWeight:800,fontSize:15,fontFamily:"'DM Sans',sans-serif"}}>✕ NON CI SONO</button>
+          </div>
+        </div>
+      )}
+
+      <div style={{display:"flex",gap:8,marginBottom:16}}>
+        {[["CI SONO",si.length,C.green],["NO",no.length,C.red],["NON RISPONDE",muti.length,C.muted]].map(([l,n,col])=>(
+          <div key={l} style={{flex:1,background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"12px 6px",textAlign:"center"}}>
+            <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:28,lineHeight:1,color:col}}>{n}</div>
+            <div style={{fontSize:9,color:C.muted,letterSpacing:.6,marginTop:3}}>{l}</div>
+          </div>
+        ))}
+      </div>
+
+      {players.length===0&&<Empty emoji="👥" text="Non c'è ancora nessuno in rosa."/>}
+
+      {si.length>0&&<><div style={{fontSize:10,color:C.green,fontWeight:800,letterSpacing:1,margin:"4px 2px 8px"}}>CI SONO ({si.length})</div>{si.map(p=><Riga key={p.id} p={p}/>)}</>}
+      {muti.length>0&&<><div style={{fontSize:10,color:C.muted,fontWeight:800,letterSpacing:1,margin:"18px 2px 8px"}}>ANCORA NIENTE ({muti.length})</div>{muti.map(p=><Riga key={p.id} p={p}/>)}</>}
+      {no.length>0&&<><div style={{fontSize:10,color:C.red,fontWeight:800,letterSpacing:1,margin:"18px 2px 8px"}}>NON CI SONO ({no.length})</div>{no.map(p=><Riga key={p.id} p={p}/>)}</>}
+    </div>
+  );
+}
+
+/* Capitano e picker: di norma il primo e l'ultimo della classifica, ma il
+   gruppo può sceglierli a mano — uno manca, uno ha già fatto il capitano
+   tre volte di fila, si decide diversamente. La scelta vale finché non la
+   si toglie. */
+function rolesOf(standings,settings){
+  const s=settings||{};
+  const has=id=>!!id&&standings.some(p=>p.id===id);
+  const auto1=standings.length?standings[0].id:null;
+  const autoLast=standings.length>=2?standings[standings.length-1].id:null;
+  const capId=has(s.captainId)?s.captainId:auto1;
+  let pickId=has(s.pickerId)?s.pickerId:autoLast;
+  if(pickId===capId){                     // stessa persona in tutti e due i ruoli: non si può
+    const alt=standings.find(p=>p.id!==capId);
+    pickId=alt?alt.id:null;
+  }
+  return{capId,pickId,capManual:has(s.captainId),pickManual:has(s.pickerId)};
+}
+
+/* ═══════════════════════════════════════════════════════
    SELEZIONE SQUADRE — in tempo reale, ognuno al suo turno
 ═══════════════════════════════════════════════════════ */
-function TeamsSection({standings,teamSel,setSel,myPlayerId,isAdmin}){
-  const hasCap=standings.length>=2;
-  const captain=hasCap?standings[0]:null;
-  const picker=hasCap?standings[standings.length-1]:null;
+function TeamsSection({standings,teamSel,setSel,myPlayerId,isAdmin,capId,pickId,capManual,pickManual,setSettings}){
+  const [scegli,setScegli]=useState(false);
+  const hasCap=standings.length>=2&&capId&&pickId;
+  const captain=hasCap?standings.find(p=>p.id===capId):null;
+  const picker=hasCap?standings.find(p=>p.id===pickId):null;
   const others=hasCap?standings.filter(p=>p.id!==captain.id&&p.id!==picker.id):[];
+  /* scegliendo qualcuno come capitano lo si toglie dall'altro ruolo, se ce l'aveva */
+  const nomina=(ruolo,id)=>{
+    if(ruolo==="cap")setSettings({captainId:id,pickerId:pickId===id?null:(pickManual?pickId:null)});
+    else setSettings({pickerId:id,captainId:capId===id?null:(capManual?capId:null)});
+  };
+  const automatico=()=>setSettings({captainId:null,pickerId:null});
 
   const phase=teamSel?.phase||"idle";
   const assign=teamSel?.assign||{};
@@ -1048,9 +1217,36 @@ function TeamsSection({standings,teamSel,setSel,myPlayerId,isAdmin}){
                 <Avatar player={player} size={56}/>
                 <div style={{fontWeight:800,color,marginTop:10,fontSize:15}}>{player.name}{myPlayerId===player.id?" (tu)":""}</div>
                 <div style={{fontSize:11,color:C.muted,marginTop:4}}>{desc}</div>
+                {((role.indexOf("CAPITANO")>=0&&capManual)||(role.indexOf("PICKER")>=0&&pickManual))&&
+                  <div style={{fontSize:10,color:C.muted,fontStyle:"italic"}}>scelto a mano</div>}
                 <div style={{fontSize:11,color:C.muted}}>Media: {player.stats?.avg?.toFixed(2)||"0.00"}</div>
               </div>
             ))}
+          </div>
+          <div style={{marginBottom:14}}>
+            <Btn onClick={()=>setScegli(v=>!v)} variant="ghost" full small>
+              {scegli?"Chiudi":(capManual||pickManual)?"Capitano e picker scelti a mano · cambia":"Scegli capitano e picker a mano"}
+            </Btn>
+            {scegli&&(
+              <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:12,marginTop:8}}>
+                <div style={{fontSize:11,color:C.muted,marginBottom:10,lineHeight:1.5}}>
+                  Senza scelte è il primo e l'ultimo della classifica. Lo può cambiare chiunque nel gruppo.
+                </div>
+                {standings.map(p=>(
+                  <div key={p.id} style={{display:"flex",alignItems:"center",gap:9,padding:"6px 0",borderBottom:`1px solid ${C.border}`}}>
+                    <Avatar player={p} size={28}/>
+                    <span style={{flex:1,fontSize:13,color:C.text,fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{p.name}</span>
+                    {[["cap","🏆",capId,C.accent],["pick","🛡️",pickId,C.red]].map(([r,ico,attuale,col])=>(
+                      <button key={r} onClick={()=>nomina(r,p.id)}
+                        style={{width:40,height:32,borderRadius:8,cursor:"pointer",fontSize:14,
+                                border:`2px solid ${attuale===p.id?col:C.border}`,
+                                background:attuale===p.id?col+"22":C.card2,opacity:attuale===p.id?1:.55}}>{ico}</button>
+                    ))}
+                  </div>
+                ))}
+                {(capManual||pickManual)&&<Btn onClick={automatico} variant="ghost" full small style={{marginTop:10}}>↺ Torna alla classifica</Btn>}
+              </div>
+            )}
           </div>
           {ioPicker
             ?<Btn onClick={startPicking} full style={{padding:"14px 0",fontSize:15,borderRadius:10}}>Forma le squadre →</Btn>
@@ -1337,6 +1533,7 @@ function PlayersSection({players,matches,isAdmin,myPlayerId,updatePlayers,setPho
 ═══════════════════════════════════════════════════════ */
 const NAV=[
   {id:"standings",icon:"🏆",label:"CLASSIFICA"},
+  {id:"callup",icon:"📅",label:"CI SEI?"},
   {id:"match",icon:"⚽",label:"PARTITE"},
   {id:"teams",icon:"🛡️",label:"SQUADRE"},
   {id:"players",icon:"👥",label:"ROSA"},
@@ -1366,6 +1563,7 @@ function CialtronApp(){
   const [group,setGroup]=useState(null);
   const [members,setMembers]=useState([]);
   const [teamSel,setTeamSel]=useState(null);
+  const [board,setBoard]=useState({settings:{},callups:{}});
   const [photoCache,setPhotoCache]=useState({});
   const [tab,setTab]=useState("standings");
   const [panel,setPanel]=useState(null);
@@ -1378,6 +1576,7 @@ function CialtronApp(){
   const email=session?session.user.email:"";
   const groupRef=useRef(null); groupRef.current=group;
   const selRef=useRef(null);   selRef.current=teamSel;
+  const boardRef=useRef(null); boardRef.current=board;
   const say=useCallback(m=>{setToast(m);setTimeout(()=>setToast(t=>t===m?"":t),2600);},[]);
 
   useEffect(()=>{const s=document.getElementById("splash");if(s)s.style.display="none";},[]);
@@ -1448,10 +1647,11 @@ function CialtronApp(){
   /* ─── il gruppo scelto ─── */
   const loadGroup=useCallback(async()=>{
     if(!sb||!groupId)return;
-    const[g,m,s]=await Promise.all([
+    const[g,m,s,b]=await Promise.all([
       sb.from('groups').select('*').eq('id',groupId).maybeSingle(),
       sb.from('group_members').select('*').eq('group_id',groupId),
       sb.from('selections').select('*').eq('group_id',groupId).maybeSingle(),
+      sb.from('board').select('*').eq('group_id',groupId).maybeSingle(),
     ]);
     if(g.error||!g.data){setGroup(null);setGroupId(null);return;}
     setGroup(g.data);
@@ -1460,6 +1660,12 @@ function CialtronApp(){
     else{
       const{data:ins}=await sb.from('selections').insert({group_id:groupId}).select().maybeSingle();
       setTeamSel((ins&&ins.state)||{phase:"idle",assign:{}});
+    }
+    /* la bacheca può mancare nei gruppi nati prima che esistesse */
+    if(b.data)setBoard({settings:b.data.settings||{},callups:b.data.callups||{}});
+    else{
+      const{data:ins}=await sb.from('board').insert({group_id:groupId}).select().maybeSingle();
+      setBoard({settings:(ins&&ins.settings)||{},callups:(ins&&ins.callups)||{}});
     }
   },[sb,groupId]);
 
@@ -1472,6 +1678,8 @@ function CialtronApp(){
           p=>{if(p.new&&p.new.id)setGroup(g=>Object.assign({},g,p.new));})
       .on('postgres_changes',{event:'*',schema:'public',table:'selections',filter:'group_id=eq.'+groupId},
           p=>{if(p.new&&p.new.state)setTeamSel(p.new.state);})
+      .on('postgres_changes',{event:'*',schema:'public',table:'board',filter:'group_id=eq.'+groupId},
+          p=>{if(p.new)setBoard({settings:p.new.settings||{},callups:p.new.callups||{}});})
       .on('postgres_changes',{event:'*',schema:'public',table:'group_members',filter:'group_id=eq.'+groupId},
           ()=>{sb.from('group_members').select('*').eq('group_id',groupId).then(({data})=>setMembers(data||[]));})
       .subscribe(st=>setLive(st==="SUBSCRIBED"));
@@ -1516,6 +1724,23 @@ function CialtronApp(){
     const{error}=await sb.from('selections').upsert({group_id:groupId,state:next,updated_at:nowIso(),updated_by:uid});
     if(error)say(errText(error));
   },[sb,groupId,uid,say]);
+
+  /* ─── bacheca: convocazioni e ruoli scelti a mano, ci scrivono tutti ─── */
+  const setSettings=useCallback(async patch=>{
+    const next=Object.assign({},(boardRef.current&&boardRef.current.settings)||{},patch);
+    Object.keys(next).forEach(k=>{if(next[k]===null)delete next[k];});
+    setBoard(b=>Object.assign({},b,{settings:next}));
+    const{error}=await sb.from('board').update({settings:next,updated_at:nowIso(),updated_by:uid}).eq('group_id',groupId);
+    if(error){say(errText(error));loadGroup();}
+  },[sb,groupId,uid,say,loadGroup]);
+
+  /* La risposta passa dal database e non da un aggiornamento nostro: due
+     persone che rispondono insieme non si cancellano a vicenda. */
+  const setCallup=useCallback(async(playerId,value,iso)=>{
+    const{data,error}=await sb.rpc('set_callup',{p_group:groupId,p_date:iso,p_player:playerId,p_value:value||""});
+    if(error){say(errText(error));return;}
+    setBoard(b=>Object.assign({},b,{callups:data||{}}));
+  },[sb,groupId,say]);
 
   /* ─── foto: tabella a parte, scaricate solo quando cambia il rev ─── */
   const syncPhotos=useCallback(async()=>{
@@ -1617,6 +1842,11 @@ function CialtronApp(){
   };
 
   /* ─── schermate d'ingresso ─── */
+  const matchDate=useMemo(()=>nextMatch(board.settings),[board.settings]);
+  const matchIso=isoDate(matchDate);
+  const {capId,pickId,capManual,pickManual}=useMemo(()=>rolesOf(standings,board.settings),[standings,board.settings]);
+  const rispostaMia=myPlayerId?((board.callups[matchIso]||{})[myPlayerId]||{}).v:null;
+
   if(!cfg)return <ConfigScreen pendingInvite={invite} onCfg={(c,code)=>{setCfg(c);setSb(makeClient(c));if(code)setInvite(code);}}/>;
   if(!sb)return(
     <Shell><Card><div style={{fontSize:14,color:C.text,lineHeight:1.7}}>
@@ -1669,6 +1899,19 @@ function CialtronApp(){
         </div>
       )}
 
+      {/* Al posto della notifica che un'app così non può mandare: finché non hai
+          risposto per la partita in arrivo, la domanda ti segue su ogni schermata. */}
+      {myPlayerId&&!rispostaMia&&players.length>0&&(
+        <div style={{background:C.card2,borderBottom:`1px solid ${C.accent}35`,padding:"10px 16px",display:"flex",alignItems:"center",gap:10}}>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:13,color:C.text,fontWeight:700}}>{dataLunga(matchDate)}: ci sei?</div>
+            <button onClick={()=>setTab("callup")} style={{background:"none",border:"none",padding:0,cursor:"pointer",fontSize:11,color:C.muted,fontFamily:"'DM Sans',sans-serif"}}>vedi chi ha risposto →</button>
+          </div>
+          <button onClick={()=>setCallup(myPlayerId,"si",matchIso)} style={{padding:"9px 14px",borderRadius:9,border:"none",background:C.green,color:"#04210F",fontWeight:800,fontSize:13,fontFamily:"'DM Sans',sans-serif",cursor:"pointer"}}>✓ Sì</button>
+          <button onClick={()=>setCallup(myPlayerId,"no",matchIso)} style={{padding:"9px 14px",borderRadius:9,border:`2px solid ${C.red}40`,background:"transparent",color:C.red,fontWeight:800,fontSize:13,fontFamily:"'DM Sans',sans-serif",cursor:"pointer"}}>✕ No</button>
+        </div>
+      )}
+
       <nav style={{background:C.card,borderBottom:`1px solid ${C.border}`,display:"flex",overflowX:"auto",padding:"0 2px"}}>
         {NAV.map(n=>(
           <button key={n.id} onClick={()=>setTab(n.id)} style={{flex:"1 0 auto",border:"none",background:"none",cursor:"pointer",padding:"10px 8px",display:"flex",flexDirection:"column",alignItems:"center",gap:3,fontFamily:"'DM Sans',sans-serif",borderBottom:`2px solid ${tab===n.id?C.accent:"transparent"}`,transition:"border-color .2s"}}>
@@ -1679,9 +1922,12 @@ function CialtronApp(){
       </nav>
 
       <main style={{maxWidth:700,margin:"0 auto",padding:"22px 14px 100px"}}>
-        {tab==="standings"&&<StandingsSection standings={standings} isAdmin={isAdmin} updatePlayers={updatePlayers}/>}
+        {tab==="standings"&&<StandingsSection standings={standings} isAdmin={isAdmin} updatePlayers={updatePlayers} capId={capId} pickId={pickId}/>}
+        {tab==="callup"   &&<CallupSection players={playersView} board={board} matchDate={matchDate} members={members} myPlayerId={myPlayerId} say={say}
+                              setCallup={(pid,v)=>setCallup(pid,v,matchIso)} setSettings={setSettings}/>}
         {tab==="match"    &&<MatchSection players={playersView} matches={matches} isAdmin={isAdmin} saveMatches={saveMatches}/>}
-        {tab==="teams"    &&<TeamsSection standings={standings} teamSel={teamSel} setSel={setSel} myPlayerId={myPlayerId} isAdmin={isAdmin}/>}
+        {tab==="teams"    &&<TeamsSection standings={standings} teamSel={teamSel} setSel={setSel} myPlayerId={myPlayerId} isAdmin={isAdmin}
+                              capId={capId} pickId={pickId} capManual={capManual} pickManual={pickManual} setSettings={setSettings}/>}
         {tab==="players"  &&<PlayersSection players={playersView} matches={matches} isAdmin={isAdmin} myPlayerId={myPlayerId}
                               updatePlayers={updatePlayers} setPhoto={setPhoto} removePlayer={removePlayer}/>}
         <div style={{textAlign:"center",fontSize:10,color:"#3A3A3A",marginTop:28,letterSpacing:1}}>v{APP_VERSION}</div>

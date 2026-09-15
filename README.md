@@ -46,6 +46,7 @@ lanciare una volta sola. È riscrivibile: rieseguirlo non cancella dati.
 groups         id, owner, name, invite_code, data jsonb   ← rosa e partite, ci scrivono gli admin
 group_members  group_id, user_id, player_id, role         ← chi è chi, e chi può cosa
 selections     group_id, state jsonb                      ← selezione squadre, ci scrivono tutti i membri
+board          group_id, settings, callups jsonb          ← giorno di gioco, capitani scelti, convocazioni
 photos         group_id, player_id, photo, rev            ← fuori dal documento: sono base64 pesanti
 ```
 
@@ -55,7 +56,11 @@ continuano quindi ad aggiornare i totali.
 
 I permessi stanno nelle policy RLS, non nell'app: un giocatore che provasse a scrivere la
 classifica verrebbe fermato dal database. Le regole sono verificate da `test/rls-test.sh`
-(27 controlli su un Postgres locale con un finto schema `auth`).
+(42 controlli su un Postgres locale con un finto schema `auth`).
+
+Le risposte alla convocazione passano dalla funzione `set_callup`, che blocca la riga e
+infila la risposta dentro: due persone che rispondono nello stesso istante non si
+cancellano a vicenda. Le date più vecchie di 60 giorni vengono potate da sole.
 
 ## Ruoli
 
@@ -63,6 +68,7 @@ classifica verrebbe fermato dal database. Le regole sono verificate da `test/rls
 |---|---|---|
 | Classifica, partite, rosa, import | ✅ | 👀 sola lettura |
 | Selezione squadre | ✅ | ✅ (al proprio turno: picker o capitano) |
+| Convocazioni, giorno di gioco, scelta dei capitani | ✅ | ✅ |
 | La propria foto e il proprio nome | ✅ | ✅ |
 | Invitare, promuovere altri admin | ✅ | ❌ |
 
@@ -72,7 +78,8 @@ Chi crea il gruppo ne è il proprietario, è sempre admin e non è degradabile.
 
 * **Classifica** — media (punti ÷ presenze), 3 punti per vittoria, badge CAP (1º) e PICK (ultimo), correzione manuale con ✏️. Compatta sotto i 460 px, tabellare sopra
 * **Partite** — 3 step: squadre → vincitore → MVP e gol; storico cancellabile
-* **Selezione squadre** — il Picker forma le squadre, il Capitano sceglie il lato; in tempo reale, e ognuno agisce solo al proprio turno
+* **Convocazione** — la prossima partita (giorno e ora decisi dal gruppo) con chi c'è e chi no, modificabile da chiunque fino all'ultimo. Finché non hai risposto, la domanda ti segue in cima a ogni schermata: è il sostituto onesto della notifica, che un'app senza server non può mandare
+* **Selezione squadre** — il Picker forma le squadre, il Capitano sceglie il lato; in tempo reale, e ognuno agisce solo al proprio turno. Di norma sono il primo e l'ultimo della classifica, ma il gruppo può sceglierli a mano
 * **Rosa** — foto dal telefono (ritagliata a 160 px, JPEG 65 %), 5 statistiche calcolate
 * **Import Excel** — `Nome · Presenze · Vittorie · Gol · MVP`, con anteprima
 * **Migrazione** — porta dentro rosa, partite e foto dal vecchio database Firebase

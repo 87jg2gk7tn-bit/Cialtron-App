@@ -64,6 +64,17 @@ create table if not exists public.photos (
   primary key (group_id, player_id)
 );
 
+-- La bacheca del gruppo: quando si gioca, chi sono capitano e picker se
+-- scelti a mano, e le convocazioni partita per partita. Ci scrivono TUTTI i
+-- membri, non solo gli admin: è roba che si sistema fra giocatori.
+create table if not exists public.board (
+  group_id   uuid primary key references public.groups(id) on delete cascade,
+  settings   jsonb not null default '{}'::jsonb,   -- giorno, ora, capitano e picker scelti
+  callups    jsonb not null default '{}'::jsonb,   -- { "2026-09-20": { "<giocatore>": {v,by,ts} } }
+  updated_at timestamptz not null default now(),
+  updated_by uuid
+);
+
 create index if not exists group_members_user_idx on public.group_members(user_id);
 create unique index if not exists groups_invite_idx on public.groups(invite_code);
 
@@ -138,6 +149,42 @@ begin
 end;
 $$;
 
+-- Rispondere alla convocazione. Passa da una funzione e non da un semplice
+-- aggiornamento perché due persone che rispondono nello stesso momento si
+-- sovrascriverebbero a vicenda: qui la riga viene bloccata e la risposta
+-- infilata dentro, senza riscrivere quelle degli altri.
+-- Ne approfitta per potare le date vecchie, che altrimenti crescono per sempre.
+create or replace function public.set_callup(p_group uuid, p_date text, p_player text, p_value text)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare cur jsonb; giorno jsonb;
+begin
+  if not is_member(p_group) then raise exception 'non sei in questo gruppo'; end if;
+  if p_date !~ '^\d{4}-\d{2}-\d{2}$' then raise exception 'data non valida'; end if;
+
+  insert into board (group_id) values (p_group) on conflict (group_id) do nothing;
+  select callups into cur from board where group_id = p_group for update;
+
+  select coalesce(jsonb_object_agg(k, v), '{}'::jsonb) into cur
+    from jsonb_each(coalesce(cur, '{}'::jsonb)) as t(k, v)
+   where k >= to_char(current_date - interval '60 days', 'YYYY-MM-DD');
+
+  giorno := coalesce(cur -> p_date, '{}'::jsonb);
+  if p_value is null or p_value = '' then
+    giorno := giorno - p_player;
+  else
+    if p_value not in ('si','no') then raise exception 'risposta non valida'; end if;
+    giorno := giorno || jsonb_build_object(p_player,
+                jsonb_build_object('v', p_value, 'by', auth.uid(),
+                                   'ts', (extract(epoch from now()))::bigint));
+  end if;
+
+  cur := cur || jsonb_build_object(p_date, giorno);
+  update board set callups = cur, updated_at = now(), updated_by = auth.uid()
+   where group_id = p_group;
+  return cur;
+end;
+$$;
+
 -- Nessuno si promuove admin da solo: il ruolo lo cambia solo un admin.
 -- E il proprietario non è degradabile, altrimenti un gruppo può restare
 -- senza nessuno che lo amministri.
@@ -169,6 +216,7 @@ begin
   values (new.id, new.owner, 'admin')
   on conflict (group_id, user_id) do update set role = 'admin';
   insert into selections (group_id) values (new.id) on conflict (group_id) do nothing;
+  insert into board (group_id) values (new.id) on conflict (group_id) do nothing;
   return new;
 end;
 $$;
@@ -183,6 +231,7 @@ alter table public.groups         enable row level security;
 alter table public.group_members  enable row level security;
 alter table public.selections     enable row level security;
 alter table public.photos         enable row level security;
+alter table public.board          enable row level security;
 
 -- `owner` si legge dalla riga candidata invece di richiamare is_member():
 -- con INSERT ... RETURNING la policy di lettura viene applicata alla riga
@@ -226,6 +275,18 @@ create policy sel_write on public.selections for update
 drop policy if exists sel_insert on public.selections;
 create policy sel_insert on public.selections for insert with check (is_member(group_id));
 
+-- La bacheca la muovono tutti i membri: convocazioni e capitani sono cose
+-- che si aggiustano fra giocatori, senza passare da un admin.
+drop policy if exists board_select on public.board;
+create policy board_select on public.board for select using (is_member(group_id));
+
+drop policy if exists board_insert on public.board;
+create policy board_insert on public.board for insert with check (is_member(group_id));
+
+drop policy if exists board_update on public.board;
+create policy board_update on public.board for update
+  using (is_member(group_id)) with check (is_member(group_id));
+
 drop policy if exists photos_select on public.photos;
 create policy photos_select on public.photos for select using (is_member(group_id));
 
@@ -251,4 +312,5 @@ begin
   begin execute 'alter publication supabase_realtime add table public.groups';        exception when duplicate_object then null; end;
   begin execute 'alter publication supabase_realtime add table public.selections';    exception when duplicate_object then null; end;
   begin execute 'alter publication supabase_realtime add table public.group_members'; exception when duplicate_object then null; end;
+  begin execute 'alter publication supabase_realtime add table public.board';         exception when duplicate_object then null; end;
 end $$;
