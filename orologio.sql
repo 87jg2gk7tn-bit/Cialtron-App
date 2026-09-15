@@ -11,7 +11,7 @@ begin
     raise exception E'Fermo: questo database contiene la tabella "trips", quindi è quello di GeppGo, non di CialtronApp.';
   end if;
   if to_regclass('public.groups') is null then
-    raise exception E'Fermo: qui non c'' è CialtronApp. Lancia prima supabase.sql in questo progetto.';
+    raise exception E'Fermo: qui non c''è CialtronApp. Lancia prima supabase.sql in questo progetto.';
   end if;
 end $$;
 
