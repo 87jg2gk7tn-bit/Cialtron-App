@@ -56,7 +56,7 @@ const C={accent:"#B8FF00",bg:"#090909",card:"#111",card2:"#1A1A1A",card3:"#222",
 /* Versione pubblicata: confrontata con version.json per avvisare che c'è
    un aggiornamento. Sul telefono la pagina resta in cache, senza questo
    controllo le modifiche non arriverebbero finché non si svuota la cache. */
-const APP_VERSION="2026-09-15.6";
+const APP_VERSION="2026-09-15.7";
 
 function useUpdateCheck(){
   const [next,setNext]=useState(null);
@@ -1271,8 +1271,16 @@ function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capI
   const picks=teamSel?.picks||[];
   const extN=teamSel?.ext||0;
 
-  const ioPicker=!!picker&&(myPlayerId===picker.id||isAdmin);
-  const ioCapitano=!!captain&&(myPlayerId===captain.id||isAdmin);
+  /* Due cose diverse che prima erano una sola: chi SEI e cosa PUOI FARE.
+     L'admin può agire al posto di chiunque — serve quando uno ha il telefono
+     scarico o non è ancora entrato — ma allora i testi non devono dargli del
+     "tu": si ritrovava "invia a Mera" essendo Mera. */
+  const sonoFormatore=!!picker&&myPlayerId===picker.id;
+  const sonoCapitano=!!captain&&myPlayerId===captain.id;
+  const ioPicker=sonoFormatore||(!!picker&&isAdmin);
+  const ioCapitano=sonoCapitano||(!!captain&&isAdmin);
+  const perContoDelFormatore=ioPicker&&!sonoFormatore;
+  const perContoDelCapitano=ioCapitano&&!sonoCapitano;
 
   /* ─── chi gioca ───
      La scelta sta nella bacheca, non in questa schermata: capitano e formatore
@@ -1492,7 +1500,16 @@ function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capI
         <>
           {BarraMetodo}
           {!ioPicker&&<Attesa chi={picker} cosa="sta formando le squadre…" colore={C.red}/>}
-          {ioPicker&&<div style={{fontSize:12,color:C.muted,marginBottom:14}}>Assegna gli altri. Tu e {captain.name} vi dividete dopo, quando sceglie il lato.</div>}
+          {ioPicker&&(
+            <div style={{fontSize:12,color:C.muted,marginBottom:14,lineHeight:1.6}}>
+              {sonoFormatore
+                ? <>Assegna gli altri. Tu e {captain.name} vi dividete dopo, quando sceglie il lato.</>
+                : <>Stai assegnando <strong style={{color:C.text}}>al posto di {picker.name}</strong>, che è il formatore: puoi farlo perché sei admin.
+                    {sonoCapitano
+                      ? <> Quando invii, il lato lo scegli tu, che sei il capitano.</>
+                      : <> Quando invii, il lato lo sceglie {captain.name}.</>}</>}
+            </div>
+          )}
           {[captain,picker].map((fixed,fi)=>(
             <div key={fixed.id} style={{display:"flex",alignItems:"center",gap:10,background:C.card2,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 14px",marginBottom:8,opacity:.5}}>
               <Avatar player={fixed} size={34}/><span style={{flex:1,fontWeight:600,fontSize:14,color:C.text}}>{fixed.name}</span>
@@ -1521,7 +1538,9 @@ function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capI
             {BtnEsterno}
             <div style={{display:"flex",gap:8,marginTop:12}}>
               <Btn onClick={reset} variant="ghost" style={{flex:1}}>Annulla</Btn>
-              <Btn onClick={()=>setSel({phase:"captain"})} disabled={!canSend} style={{flex:2}}>Invia a {captain.name} →</Btn>
+              <Btn onClick={()=>setSel({phase:"captain"})} disabled={!canSend} style={{flex:2}}>
+                {sonoCapitano?"Fatto: scegli il lato →":`Invia a ${captain.name} →`}
+              </Btn>
             </div>
           </>}
         </>
@@ -1533,8 +1552,11 @@ function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capI
           <div style={{background:(turno==="A"?C.red:C.accent)+"12",border:`1px solid ${(turno==="A"?C.red:C.accent)}30`,borderRadius:12,padding:"12px 14px",marginBottom:14,display:"flex",alignItems:"center",gap:10}}>
             <Avatar player={chiChiama} size={32}/>
             <div style={{flex:1,fontSize:13,color:C.text,lineHeight:1.5}}>
-              {ioChiamo?<><strong style={{color:turno==="A"?C.red:C.accent}}>Tocca a te</strong>: chiama un giocatore.</>
-                       :<><strong style={{color:turno==="A"?C.red:C.accent}}>{chiChiama.name}</strong> sta chiamando…</>}
+              {myPlayerId===chiChiama.id
+                ?<><strong style={{color:turno==="A"?C.red:C.accent}}>Tocca a te</strong>: chiama un giocatore.</>
+                :ioChiamo
+                  ?<>Chiami <strong style={{color:turno==="A"?C.red:C.accent}}>al posto di {chiChiama.name}</strong>, perché sei admin.</>
+                  :<><strong style={{color:turno==="A"?C.red:C.accent}}>{chiChiama.name}</strong> sta chiamando…</>}
               <div style={{fontSize:11,color:C.muted}}>{restanti.length} ancora da scegliere</div>
             </div>
             {picks.length>0&&(ioPicker||ioCapitano)&&<Btn onClick={annullaUltima} variant="ghost" small>↩</Btn>}
@@ -1568,7 +1590,9 @@ function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capI
           {BarraMetodo}
           {ioCapitano
             ?<div style={{background:C.accent+"15",border:`1px solid ${C.accent}30`,borderRadius:12,padding:"12px 14px",marginBottom:16,fontSize:13,color:C.text,lineHeight:1.5}}>
-               <strong style={{color:C.accent}}>Tocca a te</strong>: scegli con quale squadra giocare.
+               {sonoCapitano
+                 ?<><strong style={{color:C.accent}}>Tocca a te</strong>: scegli con quale squadra giocare.</>
+                 :<>Scegli <strong style={{color:C.accent}}>al posto di {captain.name}</strong>, perché sei admin.</>}
                <div style={{fontSize:11,color:C.muted}}>Proposta di {picker.name}</div>
              </div>
             :<Attesa chi={captain} cosa="sta scegliendo la squadra…" colore={C.accent}/>}
