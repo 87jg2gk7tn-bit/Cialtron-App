@@ -56,7 +56,7 @@ const C={accent:"#B8FF00",bg:"#090909",card:"#111",card2:"#1A1A1A",card3:"#222",
 /* Versione pubblicata: confrontata con version.json per avvisare che c'è
    un aggiornamento. Sul telefono la pagina resta in cache, senza questo
    controllo le modifiche non arriverebbero finché non si svuota la cache. */
-const APP_VERSION="2026-09-15.4";
+const APP_VERSION="2026-09-15.5";
 
 function useUpdateCheck(){
   const [next,setNext]=useState(null);
@@ -178,17 +178,23 @@ const FIELDS=["presences","wins","goals","mvps"];
 const ZERO={presences:0,wins:0,goals:0,mvps:0};
 
 function computeStats(player, matches){
-  let aP=0,aW=0,aG=0,aM=0;
+  let aP=0,aW=0,aG=0,aM=0,aN=0;
   for(const m of(matches||[])){
     const iW=(m.white||[]).includes(player.id), iB=(m.black||[]).includes(player.id);
-    if(iW||iB){aP++;if((m.winner==="white"&&iW)||(m.winner==="black"&&iB))aW++;}
+    if(iW||iB){
+      aP++;
+      if((m.winner==="white"&&iW)||(m.winner==="black"&&iB))aW++;
+      else if(m.winner==="draw")aN++;
+    }
     if(m.mvp===player.id)aM++; aG+=m.goals?.[player.id]||0;
   }
   const auto={presences:aP,wins:aW,goals:aG,mvps:aM};
   const b=player.base||{}, base={}, tot={};
   for(const f of FIELDS){base[f]=+b[f]||0; tot[f]=Math.max(0,auto[f]+base[f]);}
-  const points=tot.wins*3;
-  return{...tot,points,avg:tot.presences>0?points/tot.presences:0,auto,base};
+  /* 3 a chi vince, 1 a testa se finisce pari. I pareggi si contano solo dalle
+     partite registrate: nello storico importato da Excel non esistono. */
+  const points=tot.wins*3+aN;
+  return{...tot,draws:aN,points,avg:tot.presences>0?points/tot.presences:0,auto,base};
 }
 
 /* dai totali mostrati a schermo alla base da salvare (null = tutto automatico) */
@@ -789,6 +795,7 @@ function StandingsSection({standings,isAdmin,updatePlayers,capId,pickId}){
                       </div>
                       <div style={{fontSize:11,color:C.muted,marginTop:3,display:"flex",gap:9}}>
                         {FIELDS.map(f=><span key={f}>{SHORT[f]} <strong style={{color:C.text}}>{s[f]}</strong>{s.base[f]!==0&&mark(f)}</span>)}
+                        {s.draws>0&&<span>N <strong style={{color:C.text}}>{s.draws}</strong></span>}
                       </div>
                     </div>
                     {avg}{editBtn}
@@ -841,7 +848,7 @@ function StandingsSection({standings,isAdmin,updatePlayers,capId,pickId}){
    PARTITE — flusso in 3 step
 ═══════════════════════════════════════════════════════ */
 const STEPS=[{k:"teams",n:1,t:"SQUADRE",s:"Chi ha giocato e con chi"},
-             {k:"winner",n:2,t:"VINCITORE",s:"Chi ha vinto la partita"},
+             {k:"winner",n:2,t:"RISULTATO",s:"Com'è finita"},
              {k:"extra",n:3,t:"MVP E GOL",s:"Il migliore e i marcatori"}];
 
 function StepBar({phase}){
@@ -862,7 +869,11 @@ function StepBar({phase}){
 function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed}){
   const [extra,setExtra]=useState([]);   // esterni aggiunti al volo per questa partita
   const [phase,setPhase]=useState("list"), [white,setWhite]=useState([]), [black,setBlack]=useState([]);
-  const [winner,setWinner]=useState(""), [mvp,setMvp]=useState(""), [goals,setGoals]=useState({});
+  const [sw,setSw]=useState(""), [sb,setSb]=useState("");   // risultato: bianchi - neri
+  const [mvp,setMvp]=useState(""), [goals,setGoals]=useState({});
+  /* il vincitore non si chiede: si legge dal punteggio */
+  const esito=(sw===""||sb==="")?"":(+sw>+sb?"white":+sb>+sw?"black":"draw");
+  const winner=esito;
   const [busy,setBusy]=useState(false), [delId,setDelId]=useState(null);
   const getP=id=>players.find(p=>p.id===id)||(isExt(id)?extPlayer(id):null);
   const inCampo=players.concat(extra.map(extPlayer));
@@ -870,7 +881,7 @@ function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed
     if(team==="white"){setWhite(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);setBlack(p=>p.filter(x=>x!==id));}
     else{setBlack(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);setWhite(p=>p.filter(x=>x!==id));}
   };
-  const reset=()=>{setPhase("list");setWhite([]);setBlack([]);setWinner("");setMvp("");setGoals({});setExtra([]);};
+  const reset=()=>{setPhase("list");setWhite([]);setBlack([]);setSw("");setSb("");setMvp("");setGoals({});setExtra([]);};
 
   /* Arrivando da "registra la partita con queste squadre" si salta l'assegnazione:
      è già stata fatta nella selezione, riscriverla a mano sarebbe un doppione. */
@@ -879,14 +890,15 @@ function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed
     const tutti=(prefill.white||[]).concat(prefill.black||[]);
     setExtra(tutti.filter(isExt));
     setWhite(prefill.white||[]);setBlack(prefill.black||[]);
-    setWinner("");setMvp("");setGoals({});setPhase("winner");
+    setSw("");setSb("");setMvp("");setGoals({});setPhase("winner");
     onPrefillUsed&&onPrefillUsed();
   },[prefill,onPrefillUsed]);
   const submit=async()=>{
     if(!winner||busy)return;
     setBusy(true);
     const g={};Object.entries(goals).forEach(([id,v])=>{if(+v>0)g[id]=+v;});
-    const newMatch={id:uid(),date:new Date().toISOString(),white,black,winner,mvp:mvp||null,goals:g};
+    const newMatch={id:uid(),date:new Date().toISOString(),white,black,winner,
+                    scoreWhite:+sw,scoreBlack:+sb,mvp:mvp||null,goals:g};
     await saveMatches([...(matches||[]),newMatch]);
     setBusy(false);reset();
   };
@@ -916,8 +928,10 @@ function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed
             [...(matches||[])].reverse().map(m=>(
               <div key={m.id} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:14,marginBottom:8}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-                  <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                  <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
                     {["white","black"].map(t=><span key={t} style={{padding:"3px 12px",borderRadius:6,fontSize:12,fontWeight:700,background:m.winner===t?C.accent+"22":C.card2,color:m.winner===t?C.accent:C.muted,border:`1px solid ${m.winner===t?C.accent+"50":C.border}`}}>{t==="white"?"⬜ BIANCHI":"⬛ NERI"} {m.winner===t?"🏆":""}</span>)}
+                    {m.scoreWhite!=null&&<span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,letterSpacing:1,color:C.text}}>{m.scoreWhite} – {m.scoreBlack}</span>}
+                    {m.winner==="draw"&&<Tag color={C.muted}>PAREGGIO</Tag>}
                   </div>
                   {isAdmin&&<button onClick={()=>setDelId(m.id)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16}}>✕</button>}
                 </div>
@@ -970,11 +984,31 @@ function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed
         <>
           <StepBar phase={phase}/>
           {back("teams")}
-          <div style={{fontSize:12,color:C.muted,marginBottom:12}}>Tocca la squadra che ha vinto</div>
-          <div style={{display:"flex",gap:10,marginBottom:16}}>
-            {["white","black"].map(t=><TeamCard key={t} t={t} ids={t==="white"?white:black} selected={winner===t} onClick={()=>setWinner(t)}/>)}
+          <div style={{fontSize:12,color:C.muted,marginBottom:12}}>Scrivi com'è finita: il vincitore lo ricavo dal punteggio</div>
+          <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:16,marginBottom:12}}>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              {[["white",sw,setSw,"⬜ BIANCHI"],["black",sb,setSb,"⬛ NERI"]].map(([t,val,set,lab],i)=>(
+                <React.Fragment key={t}>
+                  {i===1&&<span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:26,color:C.muted}}>–</span>}
+                  <div style={{flex:1,textAlign:"center"}}>
+                    <div style={{fontSize:10,color:C.muted,fontWeight:700,marginBottom:6}}>{lab}</div>
+                    <input type="number" min="0" inputMode="numeric" value={val} onChange={e=>set(e.target.value)} placeholder="0"
+                      style={{width:"100%",background:C.card2,border:`2px solid ${esito===t?C.accent:C.border}`,color:C.text,borderRadius:10,
+                              padding:"12px 4px",fontSize:30,fontFamily:"'Bebas Neue',sans-serif",textAlign:"center"}}/>
+                  </div>
+                </React.Fragment>
+              ))}
+            </div>
+            <div style={{textAlign:"center",marginTop:12,fontFamily:"'Bebas Neue',sans-serif",fontSize:20,letterSpacing:2,
+                         color:esito==="draw"?C.muted:esito?C.accent:C.border}}>
+              {esito==="draw"?"PAREGGIO":esito==="white"?"VINCONO I BIANCHI":esito==="black"?"VINCONO I NERI":"— — —"}
+            </div>
+            {esito==="draw"&&<div style={{textAlign:"center",fontSize:11,color:C.muted,marginTop:4}}>1 punto a testa</div>}
           </div>
-          <Btn onClick={()=>setPhase("extra")} disabled={!winner} full style={{padding:"14px 0",fontSize:15,borderRadius:10}}>Avanti →</Btn>
+          <div style={{display:"flex",gap:10,marginBottom:16}}>
+            {["white","black"].map(t=><TeamCard key={t} t={t} ids={t==="white"?white:black} selected={winner===t}/>)}
+          </div>
+          <Btn onClick={()=>setPhase("extra")} disabled={!esito} full style={{padding:"14px 0",fontSize:15,borderRadius:10}}>Avanti →</Btn>
         </>
       )}
 
@@ -999,7 +1033,24 @@ function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed
                 <input type="number" min="0" max="20" placeholder="0" value={goals[id]||""} onChange={e=>setGoals(g=>({...g,[id]:e.target.value}))} style={{width:52,background:C.card2,border:`1px solid ${C.border}`,color:C.text,borderRadius:6,padding:"6px 8px",fontSize:14,textAlign:"center",fontFamily:"'DM Sans',sans-serif"}}/>
               </div>):null;})}
           </div>
-          <Btn onClick={submit} disabled={!winner||busy} full style={{padding:"14px 0",fontSize:15,borderRadius:10}}>{busy?"Salvo…":"Salva partita ✓"}</Btn>
+          {(()=>{
+            const somma=ids=>ids.reduce((n,id)=>n+(+goals[id]||0),0);
+            const gb=somma(white), gn=somma(black);
+            const manca=(+sw||0)-gb, mancaN=(+sb||0)-gn;
+            if(manca===0&&mancaN===0)return null;
+            /* Non blocca: capita di non sapere chi ha segnato, o di contare
+               un'autorete. Serve solo a non accorgersene dopo. */
+            return(
+              <div style={{background:C.card2,border:`1px solid ${C.border}`,borderRadius:12,padding:"12px 14px",marginBottom:14,fontSize:12,color:C.muted,lineHeight:1.6}}>
+                Risultato scritto: <strong style={{color:C.text}}>{sw||0} – {sb||0}</strong>. Gol assegnati: <strong style={{color:C.text}}>{gb} – {gn}</strong>.
+                {manca>0&&<> Mancano <strong style={{color:C.accent}}>{manca}</strong> gol dei bianchi.</>}
+                {mancaN>0&&<> Mancano <strong style={{color:C.accent}}>{mancaN}</strong> gol dei neri.</>}
+                {(manca<0||mancaN<0)&&<> Ne hai assegnati più di quanti ne dice il risultato.</>}
+                <div style={{fontSize:11,marginTop:4}}>Puoi salvare lo stesso: il punteggio è quello che conta per la classifica.</div>
+              </div>
+            );
+          })()}
+          <Btn onClick={submit} disabled={!esito||busy} full style={{padding:"14px 0",fontSize:15,borderRadius:10}}>{busy?"Salvo…":"Salva partita ✓"}</Btn>
         </>
       )}
     </div>
@@ -1306,6 +1357,19 @@ function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capI
   );
   const BtnEsterno=<Btn onClick={aggiungiEsterno} variant="ghost" full small style={{marginTop:8}}>＋ Aggiungi un esterno</Btn>;
 
+  /* Il bivio fra i due metodi sta nella schermata di preparazione: con una
+     selezione già avviata non lo si vedeva più, e chi voleva cambiare non
+     sapeva da dove passare. Questa barra lo dice sempre, e riporta indietro. */
+  const BarraMetodo=phase!=="idle"?(
+    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
+      <span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:15,letterSpacing:2,color:C.muted}}>
+        METODO {metodo==="draft"?"TRADIZIONALE":"CAVA"}
+      </span>
+      <div style={{flex:1}}/>
+      {(ioPicker||ioCapitano)&&<Btn onClick={reset} variant="ghost" small>↺ Cambia metodo</Btn>}
+    </div>
+  ):null;
+
   return(
     <div>
       <Banner title="SELEZIONE SQUADRE" sub="Aggiornamento in tempo reale per tutti"/>
@@ -1408,6 +1472,7 @@ function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capI
 
       phase==="picking"?(
         <>
+          {BarraMetodo}
           {!ioPicker&&<Attesa chi={picker} cosa="sta formando le squadre…" colore={C.red}/>}
           {ioPicker&&<div style={{fontSize:12,color:C.muted,marginBottom:14}}>Assegna gli altri. Tu e {captain.name} vi dividete dopo, quando sceglie il lato.</div>}
           {[captain,picker].map((fixed,fi)=>(
@@ -1446,6 +1511,7 @@ function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capI
 
       phase==="draft"?(
         <>
+          {BarraMetodo}
           <div style={{background:(turno==="A"?C.red:C.accent)+"12",border:`1px solid ${(turno==="A"?C.red:C.accent)}30`,borderRadius:12,padding:"12px 14px",marginBottom:14,display:"flex",alignItems:"center",gap:10}}>
             <Avatar player={chiChiama} size={32}/>
             <div style={{flex:1,fontSize:13,color:C.text,lineHeight:1.5}}>
@@ -1481,6 +1547,7 @@ function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capI
 
       phase==="captain"?(
         <>
+          {BarraMetodo}
           {ioCapitano
             ?<div style={{background:C.accent+"15",border:`1px solid ${C.accent}30`,borderRadius:12,padding:"12px 14px",marginBottom:16,fontSize:13,color:C.text,lineHeight:1.5}}>
                <strong style={{color:C.accent}}>Tocca a te</strong>: scegli con quale squadra giocare.
@@ -1517,6 +1584,7 @@ function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capI
 
       phase==="done"?(
         <>
+          {BarraMetodo}
           <div style={{textAlign:"center",marginBottom:22}}>
             <div style={{fontSize:40,marginBottom:8}}>🎉</div>
             <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:32,color:C.accent,letterSpacing:3}}>SQUADRE PRONTE!</div>
@@ -1672,7 +1740,7 @@ function PlayersSection({players,matches,isAdmin,myPlayerId,updatePlayers,setPho
                     ?<input value={editName} onChange={e=>setEditName(e.target.value)} autoFocus onKeyDown={e=>e.key==="Enter"&&salvaEdit(p,s)} style={{width:"100%",background:C.card2,border:`1px solid ${C.accent}`,color:C.text,borderRadius:6,padding:"7px 10px",fontSize:15,fontFamily:"'DM Sans',sans-serif",fontWeight:700}}/>
                     :<div style={{fontWeight:800,fontSize:16,color:C.text}}>{p.name}{p.id===myPlayerId&&<span style={{fontSize:10,color:C.accent,fontWeight:800,marginLeft:6,letterSpacing:1}}>SEI TU</span>}</div>
                   }
-                  <div style={{fontSize:12,color:C.muted,marginTop:3}}>Media: <span style={{color:C.accent,fontWeight:700}}>{s.avg.toFixed(2)}</span> · {s.presences} presenze</div>
+                  <div style={{fontSize:12,color:C.muted,marginTop:3}}>Media: <span style={{color:C.accent,fontWeight:700}}>{s.avg.toFixed(2)}</span> · {s.presences} presenze{s.draws>0&&<> · {s.draws} {s.draws===1?"pareggio":"pareggi"}</>}</div>
                 </div>
                 {canEdit(p)&&(
                   <div style={{display:"flex",gap:6,flexShrink:0}}>

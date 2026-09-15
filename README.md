@@ -54,6 +54,10 @@ Le statistiche **non** sono memorizzate: si ricalcolano dalle partite e ci si so
 la parte manuale (storico importato o correzione con ✏️). Le partite registrate dopo
 continuano quindi ad aggiornare i totali.
 
+I punti sono `vittorie × 3 + pareggi`. I pareggi si contano solo dalle partite registrate
+nell'app: nello storico importato da Excel non esistono, perché quel foglio non li ha, e
+per lo stesso motivo non sono modificabili a mano.
+
 I permessi stanno nelle policy RLS, non nell'app: un giocatore che provasse a scrivere la
 classifica verrebbe fermato dal database. Le regole sono verificate da `test/rls-test.sh`
 (42 controlli su un Postgres locale con un finto schema `auth`).
@@ -77,7 +81,7 @@ Chi crea il gruppo ne è il proprietario, è sempre admin e non è degradabile.
 ## Funzionalità
 
 * **Classifica** — media (punti ÷ presenze), 3 punti per vittoria, badge CAP (1º) e PICK (ultimo), correzione manuale con ✏️. Compatta sotto i 460 px, tabellare sopra
-* **Partite** — 3 step: squadre → vincitore → MVP e gol; storico cancellabile
+* **Partite** — 3 step: squadre → **risultato** → MVP e gol. Il vincitore si ricava dal punteggio, e se finisce pari è pareggio: 3 punti a chi vince, 1 a testa se si pareggia. Chi registra vede se i gol assegnati tornano col risultato scritto (avvisa, non blocca: le autoreti esistono). Storico cancellabile
 * **Convocazione** — la prossima partita (di serie il **giovedì**) con chi c'è e chi no, modificabile da chiunque fino all'ultimo. La domanda "ci sei?" comincia a girare dal **giorno d'avviso** — di serie la domenica prima — e ti segue in cima a ogni schermata finché non rispondi. Giorno di gioco, giorno d'avviso e orario li cambia chiunque dalla scheda
 * **Avvisi di turno** — un'app senza server non può mandare notifiche vere: al loro posto, chi deve fare qualcosa se lo trova scritto in cima a ogni schermata. *Tocca a te chiamare* durante la chiamata alternata, *le squadre sono pronte, scegli con quale giocare* quando il formatore ha finito la cava
 * **Selezione squadre** — due metodi, in tempo reale e ognuno al proprio turno:
