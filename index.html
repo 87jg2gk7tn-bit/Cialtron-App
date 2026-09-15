@@ -1623,7 +1623,12 @@ function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capI
                 ))}
               </div>
               <Btn onClick={()=>setModifica(true)} variant="ghost" full small style={{marginBottom:10}}>✏️ Sposta, togli o aggiungi giocatori</Btn>
-              {isAdmin&&onUseTeams&&<Btn onClick={()=>onUseTeams(fW,fB)} full style={{marginBottom:8}}>Registra la partita con queste squadre →</Btn>}
+              {isAdmin&&onUseTeams&&(
+                <>
+                  <Btn onClick={()=>onUseTeams(fW,fB)} disabled={!fW.length||!fB.length} full style={{marginBottom:fW.length&&fB.length?8:4}}>Registra la partita con queste squadre →</Btn>
+                  {(!fW.length||!fB.length)&&<div style={{fontSize:11,color:C.muted,textAlign:"center",marginBottom:8}}>Una delle due squadre è vuota.</div>}
+                </>
+              )}
               {(ioPicker||ioCapitano)&&<Btn onClick={reset} variant="ghost" full>Rifai da capo la selezione</Btn>}
             </>
           ):(
