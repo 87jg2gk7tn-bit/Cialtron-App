@@ -56,7 +56,7 @@ const C={accent:"#B8FF00",bg:"#090909",card:"#111",card2:"#1A1A1A",card3:"#222",
 /* Versione pubblicata: confrontata con version.json per avvisare che c'è
    un aggiornamento. Sul telefono la pagina resta in cache, senza questo
    controllo le modifiche non arriverebbero finché non si svuota la cache. */
-const APP_VERSION="2026-09-15.11";
+const APP_VERSION="2026-09-15.12";
 
 function useUpdateCheck(){
   const [next,setNext]=useState(null);
@@ -1189,13 +1189,29 @@ function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed
   const esito=(sw===""||sb==="")?"":(+sw>+sb?"white":+sb>+sw?"black":"pari");
   const winner=esito==="white"||esito==="black"?esito:"";
   const [busy,setBusy]=useState(false), [delId,setDelId]=useState(null);
+  const [modId,setModId]=useState(null), [conferma,setConferma]=useState(false);
   const getP=id=>players.find(p=>p.id===id)||(isExt(id)?extPlayer(id):null);
   const inCampo=players.concat(extra.map(extPlayer));
   const assign=(id,team)=>{
     if(team==="white"){setWhite(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);setBlack(p=>p.filter(x=>x!==id));}
     else{setBlack(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);setWhite(p=>p.filter(x=>x!==id));}
   };
-  const reset=()=>{setPhase("list");setWhite([]);setBlack([]);setSw("");setSb("");setMvp("");setGoals({});setExtra([]);};
+  const reset=()=>{setPhase("list");setWhite([]);setBlack([]);setSw("");setSb("");setMvp("");setGoals({});setExtra([]);
+                   setModId(null);setConferma(false);};
+
+  /* Una partita registrata si può riaprire: capita di scoprire dopo che un gol
+     non era stato contato, e allora cambia anche il risultato. Si rientra dallo
+     stesso percorso a 3 passi, con dentro già tutto quello che c'era. */
+  const apriModifica=m=>{
+    const tutti=(m.white||[]).concat(m.black||[]);
+    setExtra(tutti.filter(isExt));
+    setWhite(m.white||[]);setBlack(m.black||[]);
+    setSw(m.scoreWhite==null?"":String(m.scoreWhite));
+    setSb(m.scoreBlack==null?"":String(m.scoreBlack));
+    setMvp(m.mvp||"");
+    const g={};Object.entries(m.goals||{}).forEach(([id,v])=>{g[id]=String(v);});
+    setGoals(g);setModId(m.id);setConferma(false);setPhase("winner");
+  };
 
   /* Arrivando da "registra la partita con queste squadre" si salta l'assegnazione:
      è già stata fatta nella selezione, riscriverla a mano sarebbe un doppione. */
@@ -1211,9 +1227,11 @@ function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed
     if(!winner||busy)return;
     setBusy(true);
     const g={};Object.entries(goals).forEach(([id,v])=>{if(+v>0)g[id]=+v;});
-    const newMatch={id:uid(),date:new Date().toISOString(),white,black,winner,
-                    scoreWhite:+sw,scoreBlack:+sb,mvp:mvp||null,goals:g};
-    await saveMatches([...(matches||[]),newMatch]);
+    const dati={white,black,winner,scoreWhite:+sw,scoreBlack:+sb,mvp:mvp||null,goals:g};
+    const lista=matches||[];
+    await saveMatches(modId
+      ?lista.map(m=>m.id===modId?Object.assign({},m,dati):m)
+      :lista.concat([Object.assign({id:uid(),date:new Date().toISOString()},dati)]));
     setBusy(false);reset();
   };
   const deleteMatch=async id=>{
@@ -1221,7 +1239,14 @@ function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed
     setDelId(null);
   };
   const all=[...white,...black];
-  const back=to=><button onClick={()=>setPhase(to)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",marginBottom:14,fontSize:13,fontFamily:"'DM Sans',sans-serif"}}>← Indietro</button>;
+  const somma=ids=>ids.reduce((n,id)=>n+(+goals[id]||0),0);
+  const inModifica=modId?(
+    <div style={{display:"flex",alignItems:"center",gap:8,background:C.accent+"12",border:`1px solid ${C.accent}35`,
+                 borderRadius:10,padding:"10px 12px",marginBottom:12}}>
+      <div style={{flex:1,fontSize:12,color:C.text,lineHeight:1.5}}>Stai correggendo una partita già in storico: quando salvi, statistiche e classifica si rifanno da sole.</div>
+      <Btn onClick={reset} variant="ghost" small>Annulla</Btn>
+    </div>
+  ):null;
 
   const TeamCard=({t,ids,onClick,selected})=>(
     <div onClick={onClick} style={{flex:1,background:selected?C.accent+"12":C.card2,border:`2px solid ${selected?C.accent:C.border}`,borderRadius:12,padding:14,cursor:onClick?"pointer":"default",transition:"all .15s"}}>
@@ -1247,7 +1272,13 @@ function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed
                     {m.scoreWhite!=null&&<span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,letterSpacing:1,color:C.text}}>{m.scoreWhite} – {m.scoreBlack}</span>}
                     {m.winner==="draw"&&<Tag color={C.red}>PARI · NESSUN PUNTO</Tag>}
                   </div>
-                  {isAdmin&&<button onClick={()=>setDelId(m.id)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16}}>✕</button>}
+                  {isAdmin&&(
+                    <div style={{display:"flex",gap:4,flexShrink:0}}>
+                      <button onClick={()=>apriModifica(m)} title="Correggi risultato, gol o MVP"
+                        style={{background:"none",border:`1px solid ${C.border}`,color:C.muted,borderRadius:6,padding:"4px 9px",cursor:"pointer",fontSize:13}}>✏️</button>
+                      <button onClick={()=>setDelId(m.id)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:"0 2px"}}>✕</button>
+                    </div>
+                  )}
                 </div>
                 <div style={{display:"flex",gap:16}}>
                   {["white","black"].map(t=><div key={t} style={{flex:1}}><div style={{fontSize:10,color:C.muted,marginBottom:4}}>{t==="white"?"BIANCHI":"NERI"}</div>{(m[t]||[]).map(id=><div key={id} style={{fontSize:12,color:isExt(id)?C.muted:C.text,marginBottom:2}}>{getP(id)?.name||id}{m.goals?.[id]?<span style={{color:C.muted}}> · {m.goals[id]}⚽</span>:null}</div>)}</div>)}
@@ -1257,6 +1288,12 @@ function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed
               </div>
             ))
           }
+          {isAdmin&&(matches||[]).length>0&&(
+            <div style={{fontSize:11,color:C.muted,textAlign:"center",marginTop:6,lineHeight:1.5}}>
+              Con ✏️ riapri una partita e correggi risultato, gol o MVP: le statistiche si rifanno da sole.
+            </div>
+          )}
+
           {delId&&(
             <Modal onClose={()=>setDelId(null)}>
               <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:24,letterSpacing:2,color:C.text,marginBottom:10}}>ELIMINARE LA PARTITA?</div>
@@ -1269,6 +1306,42 @@ function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed
           )}
         </>
       )}
+
+      {conferma&&(()=>{
+        const marcatori=all.filter(id=>+goals[id]>0);
+        const gb=somma(white),gn=somma(black);
+        const torna=(+sw||0)===gb&&(+sb||0)===gn;
+        return(
+          <Modal onClose={()=>setConferma(false)}>
+            <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:24,letterSpacing:2,color:C.text,marginBottom:12}}>{modId?"AGGIORNO LA PARTITA?":"SEI SICURO?"}</div>
+            <div style={{background:C.card2,border:`1px solid ${C.border}`,borderRadius:10,padding:"12px 14px",marginBottom:14}}>
+              <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:26,letterSpacing:1,color:C.accent,textAlign:"center",lineHeight:1.1}}>
+                {sw||0} – {sb||0}
+              </div>
+              <div style={{fontSize:12,color:C.text,textAlign:"center",fontWeight:700,marginTop:2}}>
+                {winner==="white"?"⬜ Vincono i bianchi":"⬛ Vincono i neri"}
+              </div>
+              <div style={{fontSize:12,color:C.muted,marginTop:10,lineHeight:1.6}}>
+                {marcatori.length>0
+                  ?<>Gol: {marcatori.map(id=>(getP(id)||{}).name+" "+(+goals[id])).join(" · ")}</>
+                  :<>Nessun marcatore segnato.</>}
+                {mvp&&<div>MVP: {(getP(mvp)||{}).name}</div>}
+              </div>
+            </div>
+            {!torna&&<div style={{fontSize:11,color:C.red,marginBottom:12,lineHeight:1.5}}>
+              Attenzione: i gol assegnati ({gb} – {gn}) non tornano col risultato scritto ({sw||0} – {sb||0}). Puoi salvare lo stesso e correggere dopo.
+            </div>}
+            <div style={{fontSize:11,color:C.muted,marginBottom:14,lineHeight:1.5}}>
+              {modId?"Le statistiche si rifanno da sole sui valori nuovi."
+                    :"Finisce in storico e aggiorna classifica, gol e MVP. Se sbagli puoi riaprirla dallo storico con la matita."}
+            </div>
+            <div style={{display:"flex",gap:8}}>
+              <Btn onClick={()=>setConferma(false)} variant="ghost" style={{flex:1}}>No, torno indietro</Btn>
+              <Btn onClick={submit} disabled={busy} style={{flex:1}}>{busy?"Salvo…":(modId?"Sì, aggiorna":"Sì, salva")}</Btn>
+            </div>
+          </Modal>
+        );
+      })()}
 
       {phase==="teams"&&(
         <>
@@ -1297,8 +1370,11 @@ function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed
       {phase==="winner"&&(
         <>
           <StepBar phase={phase}/>
-          {back("teams")}
-          <div style={{fontSize:12,color:C.muted,marginBottom:12}}>Scrivi com'è finita: il vincitore lo ricavo dal punteggio</div>
+          {inModifica}
+          <div style={{fontSize:12,color:C.muted,marginBottom:12,lineHeight:1.5}}>
+            Scrivi com'è finita: il vincitore lo ricavo dal punteggio.
+            <span style={{color:C.muted}}> Da qui si torna indietro quando vuoi, e anche dopo aver salvato la partita si può correggere dallo storico.</span>
+          </div>
           <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:16,marginBottom:12}}>
             <div style={{display:"flex",alignItems:"center",gap:10}}>
               {[["white",sw,setSw,"⬜ BIANCHI"],["black",sb,setSb,"⬛ NERI"]].map(([t,val,set,lab],i)=>(
@@ -1322,14 +1398,17 @@ function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed
           <div style={{display:"flex",gap:10,marginBottom:16}}>
             {["white","black"].map(t=><TeamCard key={t} t={t} ids={t==="white"?white:black} selected={winner===t}/>)}
           </div>
-          <Btn onClick={()=>setPhase("extra")} disabled={!winner} full style={{padding:"14px 0",fontSize:15,borderRadius:10}}>Avanti →</Btn>
+          <div style={{display:"flex",gap:8}}>
+            <Btn onClick={()=>setPhase("teams")} variant="ghost" style={{flex:1,padding:"14px 0",fontSize:14,borderRadius:10}}>← Indietro</Btn>
+            <Btn onClick={()=>setPhase("extra")} disabled={!winner} style={{flex:2,padding:"14px 0",fontSize:15,borderRadius:10}}>Avanti →</Btn>
+          </div>
         </>
       )}
 
       {phase==="extra"&&(
         <>
           <StepBar phase={phase}/>
-          {back("winner")}
+          {inModifica}
           <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:16,marginBottom:12}}>
             <div style={{fontWeight:700,marginBottom:10,color:C.text,fontSize:14}}>⭐ MVP (opzionale)</div>
             <select value={mvp} onChange={e=>setMvp(e.target.value)} style={{width:"100%",background:C.card2,border:`1px solid ${C.border}`,color:C.text,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"'DM Sans',sans-serif"}}>
@@ -1338,17 +1417,30 @@ function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed
             </select>
           </div>
           <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:16,marginBottom:16}}>
-            <div style={{fontWeight:700,marginBottom:12,color:C.text,fontSize:14}}>⚽ Gol segnati (opzionale)</div>
-            {all.map(id=>{const p=getP(id);return p?(
-              <div key={id} style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
-                <Avatar player={p} size={28}/>
-                <span style={{flex:1,fontSize:13,color:C.text}}>{p.name}</span>
-                <span style={{fontSize:11,color:C.muted}}>{white.includes(id)?"⬜":"⬛"}</span>
-                <input type="number" min="0" max="20" placeholder="0" value={goals[id]||""} onChange={e=>setGoals(g=>({...g,[id]:e.target.value}))} style={{width:52,background:C.card2,border:`1px solid ${C.border}`,color:C.text,borderRadius:6,padding:"6px 8px",fontSize:14,textAlign:"center",fontFamily:"'DM Sans',sans-serif"}}/>
-              </div>):null;})}
+            <div style={{fontWeight:700,marginBottom:4,color:C.text,fontSize:14}}>⚽ Chi ha segnato</div>
+            <div style={{fontSize:11,color:C.muted,marginBottom:12,lineHeight:1.5}}>Squadra per squadra, quanti gol ha fatto ognuno. Da qui si aggiornano i gol nel profilo e la classifica marcatori.</div>
+            {["white","black"].map(t=>{
+              const ids=t==="white"?white:black;
+              const fatti=ids.reduce((n,id)=>n+(+goals[id]||0),0);
+              const atteso=+(t==="white"?sw:sb)||0;
+              return(
+                <div key={t} style={{marginBottom:t==="white"?14:0}}>
+                  <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
+                    <span style={{fontSize:11,color:C.muted,fontWeight:800,letterSpacing:.8}}>{t==="white"?"⬜ BIANCHI":"⬛ NERI"}</span>
+                    <div style={{flex:1,height:1,background:C.border}}/>
+                    <span style={{fontSize:11,color:fatti===atteso?C.green:C.muted}}>{fatti} di {atteso}</span>
+                  </div>
+                  {ids.map(id=>{const p=getP(id);return p?(
+                    <div key={id} style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+                      <Avatar player={p} size={28}/>
+                      <span style={{flex:1,fontSize:13,color:isExt(id)?C.muted:C.text}}>{p.name}</span>
+                      <input type="number" min="0" max="20" placeholder="0" value={goals[id]||""} onChange={e=>setGoals(g=>({...g,[id]:e.target.value}))} style={{width:52,background:C.card2,border:`1px solid ${C.border}`,color:C.text,borderRadius:6,padding:"6px 8px",fontSize:14,textAlign:"center",fontFamily:"'DM Sans',sans-serif"}}/>
+                    </div>):null;})}
+                </div>
+              );
+            })}
           </div>
           {(()=>{
-            const somma=ids=>ids.reduce((n,id)=>n+(+goals[id]||0),0);
             const gb=somma(white), gn=somma(black);
             const manca=(+sw||0)-gb, mancaN=(+sb||0)-gn;
             if(manca===0&&mancaN===0)return null;
@@ -1364,7 +1456,10 @@ function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed
               </div>
             );
           })()}
-          <Btn onClick={submit} disabled={!esito||busy} full style={{padding:"14px 0",fontSize:15,borderRadius:10}}>{busy?"Salvo…":"Salva partita ✓"}</Btn>
+          <div style={{display:"flex",gap:8}}>
+            <Btn onClick={()=>setPhase("winner")} variant="ghost" style={{flex:1,padding:"14px 0",fontSize:14,borderRadius:10}}>← Indietro</Btn>
+            <Btn onClick={()=>setConferma(true)} disabled={!winner||busy} style={{flex:2,padding:"14px 0",fontSize:15,borderRadius:10}}>{modId?"Aggiorna la partita ✓":"Salva partita ✓"}</Btn>
+          </div>
         </>
       )}
     </div>
