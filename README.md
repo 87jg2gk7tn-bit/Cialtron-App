@@ -132,14 +132,19 @@ per dirla, e la stessa casella accetta `⬜ senza nome` (punteggio senza marcato
 **La scorciatoia, una volta sola** (iPhone → Comandi Rapidi → +):
 
 1. **Testo** — l'elenco dei nomi, uno per riga, più `⬜ senza nome`, `⬛ senza nome`, `Annulla ultimo`
-   (le azioni si cercano nella barra *"Cerca app e azioni"*, sezione **Azioni**; in alternativa l'azione
-   **Elenco**, che tiene già una voce per riga e fa saltare il passo 2)
-2. **Dividi testo** — separatore *Nuove righe*
-3. **Scegli da un elenco**
-4. **Ottieni contenuto di URL** — `POST` su `https://<progetto>.supabase.co/rest/v1/rpc/live_goal`,
+2. **Dividi testo** — separatore *Nuove righe*. Si cerca scrivendo *testo*, e il suo risultato si chiama
+   "Suddividi testo"
+3. **Scegli da un elenco** — su *Suddividi testo*
+4. **Imposta la variabile** — nome `Chi`, su *Input*. Serve solo a rendere il nome scelto disponibile
+   come riquadro sopra la tastiera: senza, il passo 5 non riesce a pescarlo
+5. **Ottieni contenuti dell'URL** — `POST` su `https://<progetto>.supabase.co/rest/v1/rpc/live_goal`,
    intestazioni `apikey: <chiave pubblica>` e `Content-Type: application/json`,
-   corpo JSON `{"p_code":"<codice>","p_who":"<risultato del passo 3>"}`
-5. **Mostra risultato** — il campo `testo` della risposta
+   corpo JSON con `p_code` = il codice del gruppo e `p_who` = il riquadro **Chi**
+6. **Ottieni valore dal dizionario** — chiave `testo`
+7. **Mostra risultato**
+
+L'indirizzo va incollato come **testo semplice** (il tasto Copia dell'app lo copia così): incollato da una
+chat si porta dietro la formattazione e i Comandi Rapidi rispondono *"Errore di conversione da RTF a URL"*.
 
 Il comando compare nell'app Comandi Rapidi dell'orologio e si può mettere sul quadrante.
 Elenco, URL, chiave e corpo sono già pronti da copiare in *Account → Orologio*.

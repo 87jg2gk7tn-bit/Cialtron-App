@@ -56,7 +56,7 @@ const C={accent:"#B8FF00",bg:"#090909",card:"#111",card2:"#1A1A1A",card3:"#222",
 /* Versione pubblicata: confrontata con version.json per avvisare che c'è
    un aggiornamento. Sul telefono la pagina resta in cache, senza questo
    controllo le modifiche non arriverebbero finché non si svuota la cache. */
-const APP_VERSION="2026-09-15.15";
+const APP_VERSION="2026-09-15.16";
 
 function useUpdateCheck(){
   const [next,setNext]=useState(null);
@@ -733,15 +733,23 @@ function PolsoSetup({sb,cfg,group,players,say}){
       </div>
       <div style={{fontSize:12,color:C.muted,lineHeight:1.7,marginBottom:12}}>
         Sull'iPhone, <em>Comandi Rapidi</em> → <strong style={{color:C.text}}>+</strong>. Le azioni si cercano nella
-        barra in basso <em>"Cerca app e azioni"</em>: scrivi il nome e guarda sotto <em>Azioni</em>, non fra le app.<br/><br/>
-        1. <strong style={{color:C.text}}>Testo</strong> — incolla l'elenco qui sotto (un nome per riga). Se non la trovi,
-        usa <strong style={{color:C.text}}>Elenco</strong> e scrivi i nomi uno per riga con il <strong style={{color:C.text}}>+</strong>: salti anche il passo 2.<br/>
-        2. <strong style={{color:C.text}}>Dividi testo</strong>, separatore <em>Nuove righe</em><br/>
-        3. <strong style={{color:C.text}}>Scegli da un elenco</strong><br/>
-        4. <strong style={{color:C.text}}>Ottieni contenuto di URL</strong>: metodo POST, intestazioni <code>apikey</code> e <code>Content-Type: application/json</code>, corpo JSON come sotto (il valore di <code>p_who</code> è la variabile <em>Elemento scelto</em>)<br/>
-        5. <strong style={{color:C.text}}>Ottieni valore dal dizionario</strong>: chiave <code>testo</code><br/>
-        6. <strong style={{color:C.text}}>Mostra risultato</strong><br/>
+        barra in basso <em>"Cerca azioni"</em>: scrivi il nome e guarda sotto <em>Azioni</em>, non fra le app.
+        Sette azioni, in quest'ordine:<br/><br/>
+        1. <strong style={{color:C.text}}>Testo</strong> — incolla l'elenco qui sotto (un nome per riga)<br/>
+        2. <strong style={{color:C.text}}>Dividi testo</strong> — per <em>Nuove righe</em>. Cercala scrivendo <em>testo</em>: il suo risultato si chiama "Suddividi testo"<br/>
+        3. <strong style={{color:C.text}}>Scegli da un elenco</strong> — deve puntare a <em>Suddividi testo</em><br/>
+        4. <strong style={{color:C.text}}>Imposta la variabile</strong> — nome <code>Chi</code>, su <em>Input</em> (lascia la parola grigia Input com'è: è il nome che hai appena scelto)<br/>
+        5. <strong style={{color:C.text}}>Ottieni contenuti dell'URL</strong> — indirizzo qui sotto, metodo <strong style={{color:C.text}}>POST</strong>,
+        intestazioni <code>apikey</code> e <code>Content-Type: application/json</code>, corpo <strong style={{color:C.text}}>JSON</strong> con
+        <code> p_code</code> (il codice qui sopra) e <code>p_who</code> — e come valore di <code>p_who</code> tocca il riquadro <strong style={{color:C.text}}>Chi</strong> sopra la tastiera, non scriverlo a mano<br/>
+        6. <strong style={{color:C.text}}>Ottieni valore dal dizionario</strong> — chiave <code>testo</code><br/>
+        7. <strong style={{color:C.text}}>Mostra risultato</strong><br/><br/>
         Chiamalo <strong style={{color:C.text}}>GOL</strong>: lo trovi nei Comandi Rapidi dell'orologio e puoi metterlo sul quadrante.
+        Provalo col <strong style={{color:C.text}}>▶︎</strong> scegliendo "⬜ senza nome": deve rispondere <code>ok: true</code>.
+      </div>
+      <div style={{background:C.red+"10",border:`1px solid ${C.red}30`,borderRadius:10,padding:"10px 12px",marginBottom:12,fontSize:11,color:C.text,lineHeight:1.6}}>
+        L'indirizzo incollalo con il tasto <strong>Copia</strong> qui sotto, non copiandolo da una chat: se arriva formattato,
+        i Comandi Rapidi danno "Errore di conversione da RTF a URL" e non parte niente.
       </div>
       <Riga etichetta="ELENCO (PASSO 1)" valore={elenco}/>
       <Riga etichetta="URL (PASSO 4)" valore={url}/>
