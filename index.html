@@ -81,9 +81,24 @@ function useUpdateCheck(){
 /* ═══════════════════════════════════════════════════════
    SUPABASE — configurazione del progetto, client, invito
 ═══════════════════════════════════════════════════════ */
-const CFG_KEY="cialtron_cfg", GROUP_KEY="cialtron_group";
+const CFG_KEY="cialtron_cfg", GROUP_KEY="cialtron_group", INV_KEY="cialtron_invite";
 
-const loadCfg=()=>{try{return JSON.parse(localStorage.getItem(CFG_KEY)||"null");}catch(e){return null;}};
+/* ─── Il progetto Supabase del gruppo ───
+   Sono scritti qui apposta: chi riceve il link apre e si fa l'account, senza
+   incollare indirizzi né chiavi. La chiave anon è nata per stare dentro il
+   browser — da sola non apre niente, sono le policy del database a decidere
+   chi vede cosa. La service_role non va MAI messa qui.
+   Se restano vuoti, l'app torna a chiederli al primo avvio. */
+const BAKED_CFG={
+  url:"",
+  key:"",
+};
+const isBaked=()=>!!(BAKED_CFG.url&&BAKED_CFG.key);
+
+const loadCfg=()=>{
+  try{const c=JSON.parse(localStorage.getItem(CFG_KEY)||"null");if(c&&c.url&&c.key)return c;}catch(e){}
+  return isBaked()?{url:BAKED_CFG.url,key:BAKED_CFG.key}:null;
+};
 const saveCfg=c=>{try{localStorage.setItem(CFG_KEY,JSON.stringify(c));}catch(e){}};
 
 function makeClient(cfg){
@@ -403,7 +418,7 @@ function AuthGate({sb,onReset}){
         </div>
         <button onClick={scordata} disabled={busy} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:12,marginTop:14,width:"100%",fontFamily:"'DM Sans',sans-serif"}}>Password dimenticata?</button>
       </Card>
-      <button onClick={onReset} style={{background:"none",border:"none",color:"#333",cursor:"pointer",fontSize:11,width:"100%",fontFamily:"'DM Sans',sans-serif"}}>Cambia database</button>
+      {onReset&&<button onClick={onReset} style={{background:"none",border:"none",color:"#333",cursor:"pointer",fontSize:11,width:"100%",fontFamily:"'DM Sans',sans-serif"}}>Cambia database</button>}
     </Shell>
   );
 }
@@ -1321,9 +1336,15 @@ const nowIso=()=>new Date().toISOString();
 /* Se l'app è stata aperta da un link d'invito, il codice sta nel cancelletto. */
 function inviteFromUrl(){
   const m=(location.hash||"").match(/[#&]join=([^&]+)/);
-  if(!m)return null;
-  try{return decodeURIComponent(m[1]);}catch(e){return m[1];}
+  if(m){
+    let v=m[1];
+    try{v=decodeURIComponent(v);}catch(e){}
+    try{localStorage.setItem(INV_KEY,v);}catch(e){}
+    return v;
+  }
+  try{return localStorage.getItem(INV_KEY)||null;}catch(e){return null;}
 }
+const clearInvite=()=>{try{localStorage.removeItem(INV_KEY);}catch(e){}};
 
 function CialtronApp(){
   const [cfg,setCfg]=useState(loadCfg);
@@ -1350,6 +1371,15 @@ function CialtronApp(){
   const say=useCallback(m=>{setToast(m);setTimeout(()=>setToast(t=>t===m?"":t),2600);},[]);
 
   useEffect(()=>{const s=document.getElementById("splash");if(s)s.style.display="none";},[]);
+
+  /* Un link d'invito toccato mentre l'app è già aperta cambia solo il
+     cancelletto: il browser non ricarica niente, quindi l'invito va raccolto
+     a mano, altrimenti non succederebbe assolutamente nulla. */
+  useEffect(()=>{
+    const onHash=()=>{const v=inviteFromUrl();if(v)setInvite(v);};
+    window.addEventListener("hashchange",onHash);
+    return()=>window.removeEventListener("hashchange",onHash);
+  },[]);
 
   /* ─── sessione ─── */
   useEffect(()=>{
@@ -1382,9 +1412,15 @@ function CialtronApp(){
         const{code}=unpackInvite(invite);
         const{data,error}=await sb.rpc('join_group',{p_code:code});
         if(dead)return;
-        setInvite(null);
-        try{history.replaceState(null,"",location.pathname+location.search);}catch(e){}
-        if(error)say(/codice non valido/i.test(error.message)?"Codice invito non valido":errText(error));
+        /* L'invito si scorda solo quando la risposta è definitiva: entrato,
+           oppure codice davvero sbagliato. Se è caduta la rete lo si tiene da
+           parte, altrimenti chi ha aperto il link dovrebbe farselo rimandare. */
+        const definitiva=!error||/codice non valido/i.test(error.message||"");
+        if(definitiva){
+          setInvite(null);clearInvite();
+          try{history.replaceState(null,"",location.pathname+location.search);}catch(e){}
+        }
+        if(error)say(/codice non valido/i.test(error.message)?"Codice invito non valido":"Non sono riuscito a entrare nel gruppo: riprovo alla prossima apertura");
         else{list=await loadGroups();setGroupId(data);say("Sei dentro il gruppo");return;}
       }
       const saved=localStorage.getItem(GROUP_KEY);
@@ -1578,7 +1614,7 @@ function CialtronApp(){
     </div><Btn onClick={()=>location.reload()} full style={{marginTop:14}}>Riprova</Btn></Card></Shell>
   );
   if(booting)return <Shell><div style={{textAlign:"center",color:C.muted,fontSize:13}}>Un attimo…</div></Shell>;
-  if(!session)return <AuthGate sb={sb} onReset={()=>{localStorage.removeItem(CFG_KEY);setCfg(null);setSb(null);}}/>;
+  if(!session)return <AuthGate sb={sb} onReset={isBaked()?null:()=>{localStorage.removeItem(CFG_KEY);setCfg(null);setSb(null);}}/>;
   if(!groupId||!group)return <GroupGate sb={sb} cfg={cfg} groups={groups} say={say} onPick={id=>{setGroupId(id);loadGroups();}} onOut={logout}/>;
 
   /* finché non dici chi sei, il foglio resta aperto: senza identità la
