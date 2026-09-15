@@ -56,7 +56,7 @@ const C={accent:"#B8FF00",bg:"#090909",card:"#111",card2:"#1A1A1A",card3:"#222",
 /* Versione pubblicata: confrontata con version.json per avvisare che c'è
    un aggiornamento. Sul telefono la pagina resta in cache, senza questo
    controllo le modifiche non arriverebbero finché non si svuota la cache. */
-const APP_VERSION="2026-09-15.5";
+const APP_VERSION="2026-09-15.6";
 
 function useUpdateCheck(){
   const [next,setNext]=useState(null);
@@ -1256,6 +1256,7 @@ const extPlayer=id=>({id,name:extName(id),ext:true});
 function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capId,pickId,capManual,pickManual,setSettings,availableIds,playAll,onUseTeams,onAggiungi}){
   const [scegli,setScegli]=useState(false);
   const [agg,setAgg]=useState(false);
+  const [modifica,setModifica]=useState(false);
 
   const hasCap=standings.length>=2&&capId&&pickId;
   const captain=hasCap?standings.find(p=>p.id===capId):null;
@@ -1334,6 +1335,23 @@ function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capI
     }else setSel({picks:nuovi});
   };
   const annullaUltima=()=>setSel({picks:picks.slice(0,-1)});
+
+  /* Squadre già fatte ma ancora aggiustabili: il giorno della partita uno si
+     ritira, ne arriva un altro, due si scambiano. Rifare tutta la chiamata per
+     questo sarebbe assurdo, quindi qui si sposta senza toccare il metodo. */
+  const fW=(teamSel&&teamSel.finalWhite)||[], fB=(teamSel&&teamSel.finalBlack)||[];
+  const spostaIn=(id,lato)=>{
+    const w=fW.filter(x=>x!==id), b=fB.filter(x=>x!==id);
+    if(lato==="white")w.push(id); else if(lato==="black")b.push(id);
+    setSel({finalWhite:w,finalBlack:b});
+  };
+  const esternoInSquadra=()=>{
+    const n=extN+1, id="ext"+n;
+    const w=fW.slice(), b=fB.slice();
+    (w.length<=b.length?w:b).push(id);
+    setSel({ext:n,pool:(pool||[]).concat(id),finalWhite:w,finalBlack:b});
+  };
+  const fuoriPartita=standings.filter(p=>fW.indexOf(p.id)<0&&fB.indexOf(p.id)<0);
 
   const Attesa=({chi,cosa,colore})=>(
     <div style={{background:colore+"12",border:`1px solid ${colore}30`,borderRadius:12,padding:"12px 14px",marginBottom:16,display:"flex",alignItems:"center",gap:10}}>
@@ -1590,20 +1608,70 @@ function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capI
             <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:32,color:C.accent,letterSpacing:3}}>SQUADRE PRONTE!</div>
             <div style={{fontSize:11,color:C.muted}}>metodo {metodo==="cava"?"cava":"tradizionale"}</div>
           </div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
-            {[{side:"white",ids:teamSel.finalWhite||[],label:"⬜ BIANCHI"},{side:"black",ids:teamSel.finalBlack||[],label:"⬛ NERI"}].map(({side,ids,label})=>(
-              <div key={side} style={{background:captainSide===side?C.accent+"12":C.card2,border:`2px solid ${captainSide===side?C.accent:C.border}`,borderRadius:14,padding:14}}>
-                <div style={{fontWeight:800,marginBottom:12,fontSize:14,color:captainSide===side?C.accent:C.text}}>{label} <span style={{color:C.muted}}>({ids.length})</span></div>
-                {ids.map(id=>{const p=byId(id);return(
-                  <div key={id} style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,opacity:p.ext?.65:1}}>
-                    <Avatar player={p} size={30}/>
-                    <span style={{fontSize:13,color:myPlayerId===id?C.accent:C.text,fontWeight:(id===capId||myPlayerId===id)?800:400}}>{p.name}{id===capId?" ★":""}</span>
-                  </div>);})}
+          {!modifica?(
+            <>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
+                {[{side:"white",ids:fW,label:"⬜ BIANCHI"},{side:"black",ids:fB,label:"⬛ NERI"}].map(({side,ids,label})=>(
+                  <div key={side} style={{background:captainSide===side?C.accent+"12":C.card2,border:`2px solid ${captainSide===side?C.accent:C.border}`,borderRadius:14,padding:14}}>
+                    <div style={{fontWeight:800,marginBottom:12,fontSize:14,color:captainSide===side?C.accent:C.text}}>{label} <span style={{color:C.muted}}>({ids.length})</span></div>
+                    {ids.map(id=>{const p=byId(id);return(
+                      <div key={id} style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,opacity:p.ext?.65:1}}>
+                        <Avatar player={p} size={30}/>
+                        <span style={{fontSize:13,color:myPlayerId===id?C.accent:C.text,fontWeight:(id===capId||myPlayerId===id)?800:400}}>{p.name}{id===capId?" ★":""}</span>
+                      </div>);})}
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-          {isAdmin&&onUseTeams&&<Btn onClick={()=>onUseTeams(teamSel.finalWhite||[],teamSel.finalBlack||[])} full style={{marginBottom:8}}>Registra la partita con queste squadre →</Btn>}
-          {(ioPicker||ioCapitano)&&<Btn onClick={reset} variant="ghost" full>Nuova selezione</Btn>}
+              <Btn onClick={()=>setModifica(true)} variant="ghost" full small style={{marginBottom:10}}>✏️ Sposta, togli o aggiungi giocatori</Btn>
+              {isAdmin&&onUseTeams&&<Btn onClick={()=>onUseTeams(fW,fB)} full style={{marginBottom:8}}>Registra la partita con queste squadre →</Btn>}
+              {(ioPicker||ioCapitano)&&<Btn onClick={reset} variant="ghost" full>Rifai da capo la selezione</Btn>}
+            </>
+          ):(
+            <>
+              <div style={{fontSize:12,color:C.muted,marginBottom:12,lineHeight:1.6}}>
+                Sistema le squadre senza rifare la chiamata: sposta con ⬜ e ⬛, togli con ✕ chi si è ritirato, e aggiungi chi arriva all'ultimo. Il metodo resta {metodo==="draft"?"tradizionale":"cava"}.
+              </div>
+              {fW.concat(fB).map(id=>{
+                const p=byId(id), lato=fW.indexOf(id)>=0?"white":"black";
+                return(
+                  <div key={id} style={{display:"flex",alignItems:"center",gap:9,background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"9px 12px",marginBottom:6}}>
+                    <Avatar player={p} size={30}/>
+                    <span style={{flex:1,fontSize:13,fontWeight:600,color:C.text,opacity:p.ext?.7:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{p.name}{id===capId?" ★":""}</span>
+                    <div style={{display:"flex",gap:5}}>
+                      {["white","black"].map(t=>(
+                        <button key={t} onClick={()=>spostaIn(id,t)}
+                          style={{padding:"6px 11px",borderRadius:6,cursor:"pointer",fontSize:14,fontFamily:"'DM Sans',sans-serif",
+                                  border:`2px solid ${lato===t?C.accent:C.border}`,background:lato===t?C.accent+"18":C.card2,opacity:lato===t?1:.5}}>
+                          {t==="white"?"⬜":"⬛"}
+                        </button>
+                      ))}
+                      <button onClick={()=>spostaIn(id,null)} title="fuori dalla partita"
+                        style={{padding:"6px 10px",borderRadius:6,cursor:"pointer",fontSize:13,color:C.red,border:`1px solid ${C.red}35`,background:"transparent",fontFamily:"'DM Sans',sans-serif"}}>✕</button>
+                    </div>
+                  </div>
+                );
+              })}
+              <Btn onClick={esternoInSquadra} variant="ghost" full small style={{marginTop:6}}>＋ Aggiungi un esterno</Btn>
+              {fuoriPartita.length>0&&(
+                <div style={{marginTop:12}}>
+                  <div style={{fontSize:10,color:C.muted,letterSpacing:1,fontWeight:800,marginBottom:8}}>FUORI DALLA PARTITA ({fuoriPartita.length})</div>
+                  {fuoriPartita.map(p=>(
+                    <div key={p.id} style={{display:"flex",alignItems:"center",gap:9,background:C.card2,border:`1px solid ${C.border}`,borderRadius:10,padding:"8px 12px",marginBottom:6}}>
+                      <Avatar player={p} size={26}/>
+                      <span style={{flex:1,fontSize:13,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{p.name}</span>
+                      {["white","black"].map(t=>(
+                        <button key={t} onClick={()=>spostaIn(p.id,t)}
+                          style={{padding:"6px 11px",borderRadius:6,cursor:"pointer",fontSize:14,border:`1px solid ${C.border}`,background:C.card,fontFamily:"'DM Sans',sans-serif"}}>
+                          {t==="white"?"⬜":"⬛"}
+                        </button>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <Btn onClick={()=>setModifica(false)} full style={{marginTop:12}}>Fatto</Btn>
+            </>
+          )}
         </>
       ):null}
     </div>

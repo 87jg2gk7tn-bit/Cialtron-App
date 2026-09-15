@@ -80,7 +80,7 @@ Chi crea il gruppo ne è il proprietario, è sempre admin e non è degradabile.
 
 ## Funzionalità
 
-* **Classifica** — media (punti ÷ presenze), 3 punti per vittoria, badge CAP (1º) e PICK (ultimo), correzione manuale con ✏️. Compatta sotto i 460 px, tabellare sopra
+* **Classifica** — ordinata per **media**, cioè punti ÷ presenze: 6 punti in 2 partite fa 3.00 e sta sopra a 1 punto in 2 partite, che fa 0.50. I punti sono 3 per vittoria e 1 per pareggio. Badge CAP e PICK, correzione manuale con ✏️. Compatta sotto i 460 px, tabellare sopra
 * **Partite** — 3 step: squadre → **risultato** → MVP e gol. Il vincitore si ricava dal punteggio, e se finisce pari è pareggio: 3 punti a chi vince, 1 a testa se si pareggia. Chi registra vede se i gol assegnati tornano col risultato scritto (avvisa, non blocca: le autoreti esistono). Storico cancellabile
 * **Convocazione** — la prossima partita (di serie il **giovedì**) con chi c'è e chi no, modificabile da chiunque fino all'ultimo. La domanda "ci sei?" comincia a girare dal **giorno d'avviso** — di serie la domenica prima — e ti segue in cima a ogni schermata finché non rispondi. Giorno di gioco, giorno d'avviso e orario li cambia chiunque dalla scheda
 * **Avvisi di turno** — un'app senza server non può mandare notifiche vere: al loro posto, chi deve fare qualcosa se lo trova scritto in cima a ogni schermata. *Tocca a te chiamare* durante la chiamata alternata, *le squadre sono pronte, scegli con quale giocare* quando il formatore ha finito la cava
@@ -88,7 +88,9 @@ Chi crea il gruppo ne è il proprietario, è sempre admin e non è degradabile.
   * **cava** — il Formatore fa le due squadre, il Capitano sceglie con quale giocare
   * **tradizionale** — chiamata alternata, uno per volta, comincia il Formatore
 
-  Si pesca fra chi ha detto "ci sono" nella convocazione (o tutta la rosa, se il gruppo decide così). Capitano e Formatore sono il primo e l'ultimo **fra chi gioca**, e si possono scegliere a mano
+  Si pesca fra chi ha detto "ci sono" nella convocazione (o tutta la rosa, se il gruppo decide così). Capitano e Formatore sono il primo e l'ultimo **fra chi gioca**, e si possono scegliere a mano.
+
+  A squadre fatte niente è bloccato: si sposta un giocatore da una parte all'altra, si toglie chi si è ritirato, si aggiunge chi arriva all'ultimo o un esterno — senza rifare la chiamata e senza cambiare metodo
 * **Esterni** — riempitivi per arrivare al numero quando mancano giocatori: entrano nelle squadre e nelle partite ma non hanno profilo, non prendono statistiche e non compaiono in classifica
 * **Rosa** — foto dal telefono (ritagliata a 160 px, JPEG 65 %), 5 statistiche calcolate e modificabili al volo con la matita, senza passare dall'Excel
 * **Import Excel** — `Nome · Presenze · Vittorie · Gol · MVP`, con anteprima che confronta riga per riga i numeri del foglio con quelli già in app (`20 → 22`) prima di scrivere niente
