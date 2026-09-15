@@ -79,9 +79,14 @@ Chi crea il gruppo ne è il proprietario, è sempre admin e non è degradabile.
 * **Classifica** — media (punti ÷ presenze), 3 punti per vittoria, badge CAP (1º) e PICK (ultimo), correzione manuale con ✏️. Compatta sotto i 460 px, tabellare sopra
 * **Partite** — 3 step: squadre → vincitore → MVP e gol; storico cancellabile
 * **Convocazione** — la prossima partita (giorno e ora decisi dal gruppo) con chi c'è e chi no, modificabile da chiunque fino all'ultimo. Finché non hai risposto, la domanda ti segue in cima a ogni schermata: è il sostituto onesto della notifica, che un'app senza server non può mandare
-* **Selezione squadre** — il Picker forma le squadre, il Capitano sceglie il lato; in tempo reale, e ognuno agisce solo al proprio turno. Di norma sono il primo e l'ultimo della classifica, ma il gruppo può sceglierli a mano
-* **Rosa** — foto dal telefono (ritagliata a 160 px, JPEG 65 %), 5 statistiche calcolate
-* **Import Excel** — `Nome · Presenze · Vittorie · Gol · MVP`, con anteprima
+* **Selezione squadre** — due metodi, in tempo reale e ognuno al proprio turno:
+  * **cava** — il Formatore fa le due squadre, il Capitano sceglie con quale giocare
+  * **tradizionale** — chiamata alternata, uno per volta, comincia il Formatore
+
+  Si pesca fra chi ha detto "ci sono" nella convocazione (o tutta la rosa, se il gruppo decide così). Capitano e Formatore sono il primo e l'ultimo **fra chi gioca**, e si possono scegliere a mano
+* **Esterni** — riempitivi per arrivare al numero quando mancano giocatori: entrano nelle squadre e nelle partite ma non hanno profilo, non prendono statistiche e non compaiono in classifica
+* **Rosa** — foto dal telefono (ritagliata a 160 px, JPEG 65 %), 5 statistiche calcolate e modificabili al volo con la matita, senza passare dall'Excel
+* **Import Excel** — `Nome · Presenze · Vittorie · Gol · MVP`, con anteprima che confronta riga per riga i numeri del foglio con quelli già in app (`20 → 22`) prima di scrivere niente
 * **Migrazione** — porta dentro rosa, partite e foto dal vecchio database Firebase
 
 ## Primo avvio

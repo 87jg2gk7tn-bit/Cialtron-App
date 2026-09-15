@@ -56,7 +56,7 @@ const C={accent:"#B8FF00",bg:"#090909",card:"#111",card2:"#1A1A1A",card3:"#222",
 /* Versione pubblicata: confrontata con version.json per avvisare che c'è
    un aggiornamento. Sul telefono la pagina resta in cache, senza questo
    controllo le modifiche non arriverebbero finché non si svuota la cache. */
-const APP_VERSION="2026-09-15.2";
+const APP_VERSION="2026-09-15.3";
 
 function useUpdateCheck(){
   const [next,setNext]=useState(null);
@@ -859,16 +859,29 @@ function StepBar({phase}){
   );
 }
 
-function MatchSection({players,matches,isAdmin,saveMatches}){
+function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed}){
+  const [extra,setExtra]=useState([]);   // esterni aggiunti al volo per questa partita
   const [phase,setPhase]=useState("list"), [white,setWhite]=useState([]), [black,setBlack]=useState([]);
   const [winner,setWinner]=useState(""), [mvp,setMvp]=useState(""), [goals,setGoals]=useState({});
   const [busy,setBusy]=useState(false), [delId,setDelId]=useState(null);
-  const getP=id=>players.find(p=>p.id===id);
+  const getP=id=>players.find(p=>p.id===id)||(isExt(id)?extPlayer(id):null);
+  const inCampo=players.concat(extra.map(extPlayer));
   const assign=(id,team)=>{
     if(team==="white"){setWhite(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);setBlack(p=>p.filter(x=>x!==id));}
     else{setBlack(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);setWhite(p=>p.filter(x=>x!==id));}
   };
-  const reset=()=>{setPhase("list");setWhite([]);setBlack([]);setWinner("");setMvp("");setGoals({});};
+  const reset=()=>{setPhase("list");setWhite([]);setBlack([]);setWinner("");setMvp("");setGoals({});setExtra([]);};
+
+  /* Arrivando da "registra la partita con queste squadre" si salta l'assegnazione:
+     è già stata fatta nella selezione, riscriverla a mano sarebbe un doppione. */
+  useEffect(()=>{
+    if(!prefill)return;
+    const tutti=(prefill.white||[]).concat(prefill.black||[]);
+    setExtra(tutti.filter(isExt));
+    setWhite(prefill.white||[]);setBlack(prefill.black||[]);
+    setWinner("");setMvp("");setGoals({});setPhase("winner");
+    onPrefillUsed&&onPrefillUsed();
+  },[prefill,onPrefillUsed]);
   const submit=async()=>{
     if(!winner||busy)return;
     setBusy(true);
@@ -909,7 +922,7 @@ function MatchSection({players,matches,isAdmin,saveMatches}){
                   {isAdmin&&<button onClick={()=>setDelId(m.id)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16}}>✕</button>}
                 </div>
                 <div style={{display:"flex",gap:16}}>
-                  {["white","black"].map(t=><div key={t} style={{flex:1}}><div style={{fontSize:10,color:C.muted,marginBottom:4}}>{t==="white"?"BIANCHI":"NERI"}</div>{(m[t]||[]).map(id=><div key={id} style={{fontSize:12,color:C.text,marginBottom:2}}>{getP(id)?.name||id}{m.goals?.[id]?<span style={{color:C.muted}}> · {m.goals[id]}⚽</span>:null}</div>)}</div>)}
+                  {["white","black"].map(t=><div key={t} style={{flex:1}}><div style={{fontSize:10,color:C.muted,marginBottom:4}}>{t==="white"?"BIANCHI":"NERI"}</div>{(m[t]||[]).map(id=><div key={id} style={{fontSize:12,color:isExt(id)?C.muted:C.text,marginBottom:2}}>{getP(id)?.name||id}{m.goals?.[id]?<span style={{color:C.muted}}> · {m.goals[id]}⚽</span>:null}</div>)}</div>)}
                   {m.mvp&&<div><div style={{fontSize:10,color:C.muted,marginBottom:4}}>MVP</div><div style={{fontSize:12,color:C.accent}}>⭐ {getP(m.mvp)?.name}</div></div>}
                 </div>
                 <div style={{fontSize:11,color:C.muted,marginTop:8}}>{new Date(m.date).toLocaleDateString("it-IT",{day:"2-digit",month:"short",year:"numeric"})}</div>
@@ -933,7 +946,7 @@ function MatchSection({players,matches,isAdmin,saveMatches}){
         <>
           <StepBar phase={phase}/>
           <div style={{fontSize:12,color:C.muted,marginBottom:12}}>Assegna ogni giocatore a una squadra · <strong style={{color:C.text}}>{white.length}</strong> vs <strong style={{color:C.text}}>{black.length}</strong></div>
-          {(players||[]).map(p=>{
+          {inCampo.map(p=>{
             const iW=white.includes(p.id),iB=black.includes(p.id);
             return(
               <div key={p.id} style={{display:"flex",alignItems:"center",gap:10,background:C.card,border:`1px solid ${iW||iB?C.accent+"35":C.border}`,borderRadius:10,padding:"10px 14px",marginBottom:8}}>
@@ -944,7 +957,9 @@ function MatchSection({players,matches,isAdmin,saveMatches}){
               </div>
             );
           })}
-          <div style={{display:"flex",gap:8,marginTop:8}}>
+          <Btn onClick={()=>setExtra(e=>e.concat("ext"+(e.length+1)))} variant="ghost" full small style={{marginTop:4}}>＋ Aggiungi un esterno</Btn>
+          <div style={{fontSize:11,color:C.muted,marginTop:8,lineHeight:1.5}}>Gli esterni riempiono i buchi per giocare: non entrano in classifica e non prendono statistiche.</div>
+          <div style={{display:"flex",gap:8,marginTop:12}}>
             <Btn onClick={reset} variant="ghost" style={{flex:1}}>Annulla</Btn>
             <Btn onClick={()=>setPhase("winner")} disabled={!white.length||!black.length} style={{flex:2}}>Avanti →</Btn>
           </div>
@@ -971,7 +986,7 @@ function MatchSection({players,matches,isAdmin,saveMatches}){
             <div style={{fontWeight:700,marginBottom:10,color:C.text,fontSize:14}}>⭐ MVP (opzionale)</div>
             <select value={mvp} onChange={e=>setMvp(e.target.value)} style={{width:"100%",background:C.card2,border:`1px solid ${C.border}`,color:C.text,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"'DM Sans',sans-serif"}}>
               <option value="">— Nessun MVP —</option>
-              {all.map(id=>{const p=getP(id);return p?<option key={id} value={id}>{p.name}</option>:null;})}
+              {all.filter(id=>!isExt(id)).map(id=>{const p=getP(id);return p?<option key={id} value={id}>{p.name}</option>:null;})}
             </select>
           </div>
           <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:16,marginBottom:16}}>
@@ -1153,44 +1168,94 @@ function rolesOf(standings,settings){
 }
 
 /* ═══════════════════════════════════════════════════════
-   SELEZIONE SQUADRE — in tempo reale, ognuno al suo turno
+   SELEZIONE SQUADRE — due metodi, in tempo reale
+   · cava: il formatore fa le due squadre, il capitano sceglie il lato
+   · tradizionale: chiamata alternata, uno per volta, comincia il formatore
+   Si pesca fra chi ha detto che c'è; gli esterni riempiono i buchi.
 ═══════════════════════════════════════════════════════ */
-function TeamsSection({standings,teamSel,setSel,myPlayerId,isAdmin,capId,pickId,capManual,pickManual,setSettings}){
+const isExt=id=>/^ext\d+$/.test(String(id||""));
+const extName=id=>"Esterno "+String(id).slice(3);
+const extPlayer=id=>({id,name:extName(id),ext:true});
+
+function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capId,pickId,capManual,pickManual,setSettings,availableIds,playAll,onUseTeams}){
   const [scegli,setScegli]=useState(false);
+
   const hasCap=standings.length>=2&&capId&&pickId;
   const captain=hasCap?standings.find(p=>p.id===capId):null;
   const picker=hasCap?standings.find(p=>p.id===pickId):null;
-  const others=hasCap?standings.filter(p=>p.id!==captain.id&&p.id!==picker.id):[];
-  /* scegliendo qualcuno come capitano lo si toglie dall'altro ruolo, se ce l'aveva */
+  const byId=id=>standings.find(p=>p.id===id)||(isExt(id)?extPlayer(id):{id,name:"?"});
+
+  const phase=teamSel?.phase||"idle";
+  const metodo=teamSel?.method||"cava";
+  const assign=teamSel?.assign||{};
+  const captainSide=teamSel?.captainSide||null;
+  const pool=teamSel?.pool||[];
+  const picks=teamSel?.picks||[];
+  const extN=teamSel?.ext||0;
+
+  const ioPicker=!!picker&&(myPlayerId===picker.id||isAdmin);
+  const ioCapitano=!!captain&&(myPlayerId===captain.id||isAdmin);
+
+  /* ─── chi gioca ───
+     La scelta sta nella bacheca, non in questa schermata: capitano e formatore
+     si calcolano su chi scende davvero in campo, e devono venire uguali per
+     tutti. Prendere il primo e l'ultimo della rosa intera vorrebbe dire far
+     chiamare le squadre a qualcuno che magari nemmeno gioca. */
+  const disponibili=standings.filter(p=>(availableIds||[]).indexOf(p.id)>=0);
+  const baseIds=(eligible||standings).map(p=>p.id);
+  const inGioco=baseIds.concat(Array.from({length:extN},(_,i)=>"ext"+(i+1)));
+
   const nomina=(ruolo,id)=>{
     if(ruolo==="cap")setSettings({captainId:id,pickerId:pickId===id?null:(pickManual?pickId:null)});
     else setSettings({pickerId:id,captainId:capId===id?null:(capManual?capId:null)});
   };
   const automatico=()=>setSettings({captainId:null,pickerId:null});
 
-  const phase=teamSel?.phase||"idle";
-  const assign=teamSel?.assign||{};
-  const captainSide=teamSel?.captainSide||null;
-
-  /* Con gli account si sa chi sta guardando: tocca al picker formare le squadre
-     e al capitano scegliere il lato. L'admin può sempre sbloccare la situazione
-     (qualcuno ha il telefono scarico, non è ancora entrato…). */
-  const ioPicker=!!picker&&(myPlayerId===picker.id||isAdmin);
-  const ioCapitano=!!captain&&(myPlayerId===captain.id||isAdmin);
-  const canSend=standings.length<=2||others.every(p=>assign[p.id]==="white"||assign[p.id]==="black");
-
-  const toggleAssign=(id,side)=>setSel({assign:{...assign,[id]:assign[id]===side?null:side}});
-  const startPicking=()=>setSel({phase:"picking",assign:{},captainSide:null,finalWhite:null,finalBlack:null});
-  const sendProposal=()=>setSel({phase:"captain"});
-  const captainPick=side=>{
-    const wBase=side==="white"?[captain]:[picker];
-    const bBase=side==="black"?[captain]:[picker];
-    setSel({phase:"done",captainSide:side,
-      finalWhite:[...wBase,...others.filter(p=>assign[p.id]==="white")].map(p=>p.id),
-      finalBlack:[...bBase,...others.filter(p=>assign[p.id]==="black")].map(p=>p.id)});
+  const avvia=m=>{
+    const p=inGioco.slice();
+    if(p.indexOf(capId)<0)p.push(capId);
+    if(p.indexOf(pickId)<0)p.push(pickId);
+    setSel({phase:m==="cava"?"picking":"draft",method:m,pool:p,ext:extN,
+            assign:{},picks:[],captainSide:null,finalWhite:null,finalBlack:null});
   };
-  const reset=()=>setSel({phase:"idle",assign:{},captainSide:null,finalWhite:null,finalBlack:null});
-  const getById=id=>standings.find(p=>p.id===id);
+  const reset=()=>setSel({phase:"idle",method:metodo,assign:{},picks:[],pool:[],ext:0,
+                          captainSide:null,finalWhite:null,finalBlack:null});
+  const aggiungiEsterno=()=>{
+    const n=extN+1;
+    if(phase==="idle")setSel({ext:n});
+    else setSel({ext:n,pool:(pool||[]).concat("ext"+n)});
+  };
+
+  /* ─── cava ─── */
+  const altri=pool.filter(id=>id!==capId&&id!==pickId);
+  const canSend=altri.every(id=>assign[id]==="white"||assign[id]==="black");
+  const toggleAssign=(id,side)=>setSel({assign:Object.assign({},assign,{[id]:assign[id]===side?null:side})});
+  const captainPick=side=>{
+    const base_=side==="white"?[captain.id]:[picker.id];
+    const other=side==="white"?[picker.id]:[captain.id];
+    setSel({phase:"done",captainSide:side,
+      finalWhite:(side==="white"?base_:other).concat(altri.filter(id=>assign[id]==="white")),
+      finalBlack:(side==="black"?base_:other).concat(altri.filter(id=>assign[id]==="black"))});
+  };
+
+  /* ─── tradizionale: chiama prima il formatore, poi si alterna ─── */
+  const teamA=[pickId].concat(picks.filter(x=>x.t==="A").map(x=>x.id));
+  const teamB=[capId].concat(picks.filter(x=>x.t==="B").map(x=>x.id));
+  const presi=teamA.concat(teamB);
+  const restanti=pool.filter(id=>presi.indexOf(id)<0);
+  const turno=picks.length%2===0?"A":"B";
+  const chiChiama=turno==="A"?picker:captain;
+  const ioChiamo=turno==="A"?ioPicker:ioCapitano;
+  const chiama=id=>{
+    const nuovi=picks.concat({t:turno,id});
+    const rimasti=pool.filter(x=>teamA.concat(teamB,[id]).indexOf(x)<0);
+    if(rimasti.length===0){
+      const A=[pickId].concat(nuovi.filter(x=>x.t==="A").map(x=>x.id));
+      const B=[capId].concat(nuovi.filter(x=>x.t==="B").map(x=>x.id));
+      setSel({picks:nuovi,phase:"done",captainSide:null,finalWhite:A,finalBlack:B});
+    }else setSel({picks:nuovi});
+  };
+  const annullaUltima=()=>setSel({picks:picks.slice(0,-1)});
 
   const Attesa=({chi,cosa,colore})=>(
     <div style={{background:colore+"12",border:`1px solid ${colore}30`,borderRadius:12,padding:"12px 14px",marginBottom:16,display:"flex",alignItems:"center",gap:10}}>
@@ -1201,6 +1266,18 @@ function TeamsSection({standings,teamSel,setSel,myPlayerId,isAdmin,capId,pickId,
       </div>
     </div>
   );
+  const Colonna=({label,ids,col,sub})=>(
+    <div style={{flex:1,background:C.card2,border:`1px solid ${col}30`,borderRadius:12,padding:12}}>
+      <div style={{fontWeight:800,fontSize:13,color:C.text}}>{label} <span style={{color:C.muted}}>({ids.length})</span></div>
+      {sub&&<div style={{fontSize:10,color:col,marginBottom:10,fontWeight:700}}>{sub}</div>}
+      {ids.map(id=>{const p=byId(id);return(
+        <div key={id} style={{display:"flex",alignItems:"center",gap:7,marginBottom:6,opacity:p.ext?.65:1}}>
+          <Avatar player={p} size={24}/>
+          <span style={{fontSize:12,color:myPlayerId===id?C.accent:C.text,fontWeight:myPlayerId===id?800:400,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{p.name}</span>
+        </div>);})}
+    </div>
+  );
+  const BtnEsterno=<Btn onClick={aggiungiEsterno} variant="ghost" full small style={{marginTop:8}}>＋ Aggiungi un esterno</Btn>;
 
   return(
     <div>
@@ -1209,74 +1286,101 @@ function TeamsSection({standings,teamSel,setSel,myPlayerId,isAdmin,capId,pickId,
 
       phase==="idle"?(
         <>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:20}}>
-            {[{player:captain,role:"🏆 CAPITANO",desc:"Sceglie la squadra",color:C.accent},
-              {player:picker,role:"🛡️ PICKER",desc:"Decide le squadre",color:C.red}].map(({player,role,desc,color})=>(
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
+            {[{player:captain,role:"🏆 CAPITANO",desc:metodo==="cava"?"Sceglie la squadra":"Chiama per secondo",color:C.accent,man:capManual},
+              {player:picker,role:"🛡️ FORMATORE",desc:metodo==="cava"?"Fa le due squadre":"Chiama per primo",color:C.red,man:pickManual}].map(({player,role,desc,color,man})=>(
               <div key={player.id} style={{background:color+"0D",border:`1px solid ${color}25`,borderRadius:14,padding:16,textAlign:"center"}}>
                 <div style={{fontSize:10,color:C.muted,letterSpacing:1,marginBottom:10}}>{role}</div>
                 <Avatar player={player} size={56}/>
                 <div style={{fontWeight:800,color,marginTop:10,fontSize:15}}>{player.name}{myPlayerId===player.id?" (tu)":""}</div>
                 <div style={{fontSize:11,color:C.muted,marginTop:4}}>{desc}</div>
-                {((role.indexOf("CAPITANO")>=0&&capManual)||(role.indexOf("PICKER")>=0&&pickManual))&&
-                  <div style={{fontSize:10,color:C.muted,fontStyle:"italic"}}>scelto a mano</div>}
-                <div style={{fontSize:11,color:C.muted}}>Media: {player.stats?.avg?.toFixed(2)||"0.00"}</div>
+                {man&&<div style={{fontSize:10,color:C.muted,fontStyle:"italic"}}>scelto a mano</div>}
               </div>
             ))}
           </div>
-          <div style={{marginBottom:14}}>
-            <Btn onClick={()=>setScegli(v=>!v)} variant="ghost" full small>
-              {scegli?"Chiudi":(capManual||pickManual)?"Capitano e picker scelti a mano · cambia":"Scegli capitano e picker a mano"}
-            </Btn>
-            {scegli&&(
-              <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:12,marginTop:8}}>
-                <div style={{fontSize:11,color:C.muted,marginBottom:10,lineHeight:1.5}}>
-                  Senza scelte è il primo e l'ultimo della classifica. Lo può cambiare chiunque nel gruppo.
+
+          <Btn onClick={()=>setScegli(v=>!v)} variant="ghost" full small>
+            {scegli?"Chiudi":(capManual||pickManual)?"Capitano e formatore scelti a mano · cambia":"Scegli capitano e formatore a mano"}
+          </Btn>
+          {scegli&&(
+            <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:12,marginTop:8}}>
+              <div style={{fontSize:11,color:C.muted,marginBottom:10,lineHeight:1.5}}>Senza scelte è il primo e l'ultimo della classifica. Lo può cambiare chiunque.</div>
+              {standings.map(p=>(
+                <div key={p.id} style={{display:"flex",alignItems:"center",gap:9,padding:"6px 0",borderBottom:`1px solid ${C.border}`}}>
+                  <Avatar player={p} size={28}/>
+                  <span style={{flex:1,fontSize:13,color:C.text,fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{p.name}</span>
+                  {[["cap","🏆",capId,C.accent],["pick","🛡️",pickId,C.red]].map(([r,ico,attuale,col])=>(
+                    <button key={r} onClick={()=>nomina(r,p.id)}
+                      style={{width:40,height:32,borderRadius:8,cursor:"pointer",fontSize:14,
+                              border:`2px solid ${attuale===p.id?col:C.border}`,
+                              background:attuale===p.id?col+"22":C.card2,opacity:attuale===p.id?1:.55}}>{ico}</button>
+                  ))}
                 </div>
-                {standings.map(p=>(
-                  <div key={p.id} style={{display:"flex",alignItems:"center",gap:9,padding:"6px 0",borderBottom:`1px solid ${C.border}`}}>
-                    <Avatar player={p} size={28}/>
-                    <span style={{flex:1,fontSize:13,color:C.text,fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{p.name}</span>
-                    {[["cap","🏆",capId,C.accent],["pick","🛡️",pickId,C.red]].map(([r,ico,attuale,col])=>(
-                      <button key={r} onClick={()=>nomina(r,p.id)}
-                        style={{width:40,height:32,borderRadius:8,cursor:"pointer",fontSize:14,
-                                border:`2px solid ${attuale===p.id?col:C.border}`,
-                                background:attuale===p.id?col+"22":C.card2,opacity:attuale===p.id?1:.55}}>{ico}</button>
-                    ))}
-                  </div>
-                ))}
-                {(capManual||pickManual)&&<Btn onClick={automatico} variant="ghost" full small style={{marginTop:10}}>↺ Torna alla classifica</Btn>}
-              </div>
-            )}
+              ))}
+              {(capManual||pickManual)&&<Btn onClick={automatico} variant="ghost" full small style={{marginTop:10}}>↺ Torna alla classifica</Btn>}
+            </div>
+          )}
+
+          <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:14,margin:"16px 0"}}>
+            <div style={{fontSize:10,color:C.muted,letterSpacing:1,marginBottom:10}}>CHI GIOCA</div>
+            <div style={{display:"flex",gap:8,marginBottom:10}}>
+              {[[false,"Chi ha detto sì",disponibili.length],[true,"Tutta la rosa",standings.length]].map(([v,l,n])=>(
+                <button key={String(v)} onClick={()=>setSettings({playAll:v})} disabled={disponibili.length<2&&!v}
+                  style={{flex:1,padding:"10px 6px",borderRadius:10,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",
+                          border:`2px solid ${(!!playAll===v||(disponibili.length<2&&v))?C.accent:C.border}`,
+                          background:(!!playAll===v||(disponibili.length<2&&v))?C.accent+"15":C.card2,
+                          color:(!!playAll===v||(disponibili.length<2&&v))?C.accent:C.muted,opacity:(disponibili.length<2&&!v)?.4:1}}>
+                  <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,lineHeight:1}}>{n}</div>
+                  <div style={{fontSize:10,fontWeight:700,letterSpacing:.5,marginTop:2}}>{l}</div>
+                </button>
+              ))}
+            </div>
+            <div style={{fontSize:12,color:C.text}}>
+              In campo: <strong style={{color:C.accent}}>{inGioco.length}</strong>
+              {extN>0&&<span style={{color:C.muted}}> · di cui {extN} esterni</span>}
+              {inGioco.length%2!==0&&<span style={{color:C.red}}> · siete in numero dispari</span>}
+            </div>
+            {BtnEsterno}
+            {disponibili.length<2&&<div style={{fontSize:11,color:C.muted,marginTop:8,lineHeight:1.5}}>Nessuno ha ancora risposto alla convocazione: si gioca con tutta la rosa.</div>}
           </div>
-          {ioPicker
-            ?<Btn onClick={startPicking} full style={{padding:"14px 0",fontSize:15,borderRadius:10}}>Forma le squadre →</Btn>
-            :<div style={{textAlign:"center",fontSize:13,color:C.muted,lineHeight:1.6,padding:"6px 10px"}}>
-               Tocca a <strong style={{color:C.red}}>{picker.name}</strong> far partire la selezione.<br/>
-               <span style={{fontSize:11}}>Quando lo fa, lo vedi comparire qui da solo.</span>
-             </div>}
+
+          <div style={{fontSize:10,color:C.muted,letterSpacing:1,margin:"0 2px 8px"}}>COME SI FANNO LE SQUADRE</div>
+          {[{k:"cava",t:"CAVA",d:`${picker.name} fa le due squadre, poi ${captain.name} sceglie con quale giocare.`},
+            {k:"draft",t:"TRADIZIONALE",d:`Chiamata alternata: comincia ${picker.name}, uno per volta, fino a esaurimento.`}].map(m=>(
+            <button key={m.k} onClick={()=>ioPicker&&avvia(m.k)} disabled={!ioPicker}
+              style={{width:"100%",textAlign:"left",background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:14,marginBottom:8,cursor:ioPicker?"pointer":"default",opacity:ioPicker?1:.5,fontFamily:"'DM Sans',sans-serif"}}>
+              <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:19,letterSpacing:2,color:C.accent}}>METODO {m.t}</div>
+              <div style={{fontSize:12,color:C.muted,marginTop:4,lineHeight:1.5}}>{m.d}</div>
+            </button>
+          ))}
+          {!ioPicker&&<div style={{textAlign:"center",fontSize:13,color:C.muted,lineHeight:1.6,padding:"6px 10px"}}>
+            Tocca a <strong style={{color:C.red}}>{picker.name}</strong> far partire la selezione.<br/>
+            <span style={{fontSize:11}}>Quando lo fa, lo vedi comparire qui da solo.</span>
+          </div>}
         </>
       ):
 
       phase==="picking"?(
         <>
           {!ioPicker&&<Attesa chi={picker} cosa="sta formando le squadre…" colore={C.red}/>}
-          {ioPicker&&<div style={{fontSize:12,color:C.muted,marginBottom:14}}>Assegna gli altri giocatori. Capitano e picker si dividono dopo, quando il capitano sceglie il lato.</div>}
+          {ioPicker&&<div style={{fontSize:12,color:C.muted,marginBottom:14}}>Assegna gli altri. Tu e {captain.name} vi dividete dopo, quando sceglie il lato.</div>}
           {[captain,picker].map((fixed,fi)=>(
             <div key={fixed.id} style={{display:"flex",alignItems:"center",gap:10,background:C.card2,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 14px",marginBottom:8,opacity:.5}}>
               <Avatar player={fixed} size={34}/><span style={{flex:1,fontWeight:600,fontSize:14,color:C.text}}>{fixed.name}</span>
-              <Tag color={fi===0?C.accent:C.red}>{fi===0?"CAPITANO":"PICKER"}</Tag>
+              <Tag color={fi===0?C.accent:C.red}>{fi===0?"CAPITANO":"FORMATORE"}</Tag>
             </div>
           ))}
-          {others.length>0&&<div style={{height:1,background:C.border,margin:"14px 0 12px"}}/>}
-          {others.map(p=>{
-            const side=assign[p.id];
+          {altri.length>0&&<div style={{height:1,background:C.border,margin:"14px 0 12px"}}/>}
+          {altri.map(id=>{
+            const p=byId(id), side=assign[id];
             return(
-              <div key={p.id} style={{display:"flex",alignItems:"center",gap:10,background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 14px",marginBottom:8}}>
-                <Avatar player={p} size={34}/><span style={{flex:1,fontWeight:600,fontSize:14,color:C.text}}>{p.name}</span>
+              <div key={id} style={{display:"flex",alignItems:"center",gap:10,background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 14px",marginBottom:8}}>
+                <Avatar player={p} size={34}/>
+                <span style={{flex:1,fontWeight:600,fontSize:14,color:C.text,opacity:p.ext?.7:1}}>{p.name}</span>
                 <div style={{display:"flex",gap:6}}>
                   {["white","black"].map(t=>(
-                    <button key={t} disabled={!ioPicker} onClick={()=>ioPicker&&toggleAssign(p.id,t)}
-                      style={{padding:"6px 14px",borderRadius:6,cursor:ioPicker?"pointer":"default",fontWeight:700,fontSize:14,fontFamily:"'DM Sans',sans-serif",border:`2px solid ${side===t?C.accent:C.border}`,background:side===t?(t==="white"?"#ffffff18":"#33333344"):C.card2,color:side===t?C.accent:C.muted,opacity:ioPicker||side===t?1:.45,transition:"all .15s"}}>
+                    <button key={t} disabled={!ioPicker} onClick={()=>ioPicker&&toggleAssign(id,t)}
+                      style={{padding:"6px 14px",borderRadius:6,cursor:ioPicker?"pointer":"default",fontWeight:700,fontSize:14,fontFamily:"'DM Sans',sans-serif",border:`2px solid ${side===t?C.accent:C.border}`,background:side===t?(t==="white"?"#ffffff18":"#33333344"):C.card2,color:side===t?C.accent:C.muted,opacity:ioPicker||side===t?1:.45}}>
                       {t==="white"?"⬜":"⬛"}
                     </button>
                   ))}
@@ -1284,12 +1388,48 @@ function TeamsSection({standings,teamSel,setSel,myPlayerId,isAdmin,capId,pickId,
               </div>
             );
           })}
-          {ioPicker&&(
+          {ioPicker&&<>
+            {BtnEsterno}
             <div style={{display:"flex",gap:8,marginTop:12}}>
               <Btn onClick={reset} variant="ghost" style={{flex:1}}>Annulla</Btn>
-              <Btn onClick={sendProposal} disabled={!canSend} style={{flex:2}}>Invia a {captain.name} →</Btn>
+              <Btn onClick={()=>setSel({phase:"captain"})} disabled={!canSend} style={{flex:2}}>Invia a {captain.name} →</Btn>
             </div>
-          )}
+          </>}
+        </>
+      ):
+
+      phase==="draft"?(
+        <>
+          <div style={{background:(turno==="A"?C.red:C.accent)+"12",border:`1px solid ${(turno==="A"?C.red:C.accent)}30`,borderRadius:12,padding:"12px 14px",marginBottom:14,display:"flex",alignItems:"center",gap:10}}>
+            <Avatar player={chiChiama} size={32}/>
+            <div style={{flex:1,fontSize:13,color:C.text,lineHeight:1.5}}>
+              {ioChiamo?<><strong style={{color:turno==="A"?C.red:C.accent}}>Tocca a te</strong>: chiama un giocatore.</>
+                       :<><strong style={{color:turno==="A"?C.red:C.accent}}>{chiChiama.name}</strong> sta chiamando…</>}
+              <div style={{fontSize:11,color:C.muted}}>{restanti.length} ancora da scegliere</div>
+            </div>
+            {picks.length>0&&(ioPicker||ioCapitano)&&<Btn onClick={annullaUltima} variant="ghost" small>↩</Btn>}
+          </div>
+
+          <div style={{display:"flex",gap:10,marginBottom:16}}>
+            <Colonna label="⬜ BIANCHI" ids={teamA} col={C.red} sub={"chiama "+picker.name}/>
+            <Colonna label="⬛ NERI" ids={teamB} col={C.accent} sub={"chiama "+captain.name}/>
+          </div>
+
+          {restanti.map(id=>{
+            const p=byId(id);
+            return(
+              <button key={id} onClick={()=>ioChiamo&&chiama(id)} disabled={!ioChiamo}
+                style={{width:"100%",display:"flex",alignItems:"center",gap:10,background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 14px",marginBottom:8,cursor:ioChiamo?"pointer":"default",opacity:ioChiamo?1:.55,fontFamily:"'DM Sans',sans-serif"}}>
+                <Avatar player={p} size={34}/>
+                <span style={{flex:1,textAlign:"left",fontWeight:600,fontSize:14,color:C.text,opacity:p.ext?.7:1}}>{p.name}</span>
+                {ioChiamo&&<span style={{fontSize:12,color:turno==="A"?C.red:C.accent,fontWeight:800}}>CHIAMA →</span>}
+              </button>
+            );
+          })}
+          {(ioPicker||ioCapitano)&&<>
+            {BtnEsterno}
+            <Btn onClick={reset} variant="ghost" full style={{marginTop:8}}>Annulla tutto</Btn>
+          </>}
         </>
       ):
 
@@ -1303,11 +1443,14 @@ function TeamsSection({standings,teamSel,setSel,myPlayerId,isAdmin,capId,pickId,
             :<Attesa chi={captain} cosa="sta scegliendo la squadra…" colore={C.accent}/>}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
             {["white","black"].map(t=>{
-              const teamOthers=others.filter(p=>assign[p.id]===t);
+              const team=altri.filter(id=>assign[id]===t);
               return(
                 <div key={t} style={{background:C.card2,border:`1px solid ${C.border}`,borderRadius:12,padding:14}}>
                   <div style={{fontWeight:800,marginBottom:10,fontSize:14,color:C.text}}>{t==="white"?"⬜ BIANCHI":"⬛ NERI"}</div>
-                  {teamOthers.map(p=><div key={p.id} style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}><Avatar player={p} size={22}/><span style={{fontSize:12,color:C.text}}>{p.name}</span></div>)}
+                  {team.map(id=>{const p=byId(id);return(
+                    <div key={id} style={{display:"flex",alignItems:"center",gap:6,marginBottom:6,opacity:p.ext?.65:1}}>
+                      <Avatar player={p} size={22}/><span style={{fontSize:12,color:C.text}}>{p.name}</span>
+                    </div>);})}
                   <div style={{borderTop:`1px solid ${C.border}`,marginTop:8,paddingTop:8}}>
                     <div style={{fontSize:11,color:C.accent,fontStyle:"italic"}}>+ {captain.name}</div>
                     <div style={{fontSize:11,color:C.muted,fontStyle:"italic"}}>— {picker.name} dall'altra parte</div>
@@ -1331,19 +1474,21 @@ function TeamsSection({standings,teamSel,setSel,myPlayerId,isAdmin,capId,pickId,
           <div style={{textAlign:"center",marginBottom:22}}>
             <div style={{fontSize:40,marginBottom:8}}>🎉</div>
             <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:32,color:C.accent,letterSpacing:3}}>SQUADRE PRONTE!</div>
+            <div style={{fontSize:11,color:C.muted}}>metodo {metodo==="cava"?"cava":"tradizionale"}</div>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
             {[{side:"white",ids:teamSel.finalWhite||[],label:"⬜ BIANCHI"},{side:"black",ids:teamSel.finalBlack||[],label:"⬛ NERI"}].map(({side,ids,label})=>(
               <div key={side} style={{background:captainSide===side?C.accent+"12":C.card2,border:`2px solid ${captainSide===side?C.accent:C.border}`,borderRadius:14,padding:14}}>
-                <div style={{fontWeight:800,marginBottom:12,fontSize:14,color:captainSide===side?C.accent:C.text}}>{label}</div>
-                {ids.map(id=>{const p=getById(id);return p?(
-                  <div key={id} style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                <div style={{fontWeight:800,marginBottom:12,fontSize:14,color:captainSide===side?C.accent:C.text}}>{label} <span style={{color:C.muted}}>({ids.length})</span></div>
+                {ids.map(id=>{const p=byId(id);return(
+                  <div key={id} style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,opacity:p.ext?.65:1}}>
                     <Avatar player={p} size={30}/>
-                    <span style={{fontSize:13,color:myPlayerId===id?C.accent:C.text,fontWeight:p.id===captain.id||myPlayerId===id?800:400}}>{p.name}{p.id===captain.id?" ★":""}</span>
-                  </div>):null;})}
+                    <span style={{fontSize:13,color:myPlayerId===id?C.accent:C.text,fontWeight:(id===capId||myPlayerId===id)?800:400}}>{p.name}{id===capId?" ★":""}</span>
+                  </div>);})}
               </div>
             ))}
           </div>
+          {isAdmin&&onUseTeams&&<Btn onClick={()=>onUseTeams(teamSel.finalWhite||[],teamSel.finalBlack||[])} full style={{marginBottom:8}}>Registra la partita con queste squadre →</Btn>}
           {(ioPicker||ioCapitano)&&<Btn onClick={reset} variant="ghost" full>Nuova selezione</Btn>}
         </>
       ):null}
@@ -1359,8 +1504,8 @@ function PlayersSection({players,matches,isAdmin,myPlayerId,updatePlayers,setPho
      di essere; il resto della rosa resta agli admin */
   const canEdit=p=>isAdmin||p.id===myPlayerId;
   const [showAdd,setShowAdd]=useState(false), [newName,setNewName]=useState(""), [newPhoto,setNewPhoto]=useState(null);
-  const [editId,setEditId]=useState(null), [editName,setEditName]=useState("");
-  const [busy,setBusy]=useState(false), [delP,setDelP]=useState(null);
+  const [editId,setEditId]=useState(null), [editName,setEditName]=useState(""), [editVals,setEditVals]=useState({});
+  const [busy,setBusy]=useState(false), [delP,setDelP]=useState(null), [delSicuro,setDelSicuro]=useState(false);
   const [imp,setImp]=useState(null), [impErr,setImpErr]=useState("");
   const newPhotoRef=useRef(null), xlsRef=useRef(null);
 
@@ -1372,9 +1517,16 @@ function PlayersSection({players,matches,isAdmin,myPlayerId,updatePlayers,setPho
     if(newPhoto) await setPhoto(id,newPhoto);
     setNewName("");setNewPhoto(null);setShowAdd(false);setBusy(false);
   };
-  const rename=async(id,name)=>{
-    if(!name.trim())return setEditId(null);
-    await updatePlayers(list=>list.map(p=>p.id===id?{...p,name:name.trim()}:p));
+  /* Dalla matita si sistema tutto insieme: nome e numeri. Serve per aggiornare
+     al volo dopo la partita, senza ricaricare l'Excel ogni volta. */
+  const apriEdit=(p,st)=>{
+    setEditId(p.id);setEditName(p.name);
+    setEditVals({presences:st.presences,wins:st.wins,goals:st.goals,mvps:st.mvps});
+  };
+  const salvaEdit=async(p,st)=>{
+    const nome=(editName||"").trim()||p.name;
+    const base=baseFromTotals(editVals,st.auto);
+    await updatePlayers(list=>list.map(x=>x.id===p.id?{...x,name:nome,base,overrides:null}:x));
     setEditId(null);
   };
 
@@ -1391,12 +1543,20 @@ function PlayersSection({players,matches,isAdmin,myPlayerId,updatePlayers,setPho
         const name=String(f.name??"").trim();
         if(!name){skipped++;continue;}
         if(parsed.some(r=>norm(r.name)===norm(name))){skipped++;continue;}
-        parsed.push({name,
+        const gia=(players||[]).find(p=>norm(p.name)===norm(name));
+        const riga={name,
           presences:Math.max(0,Math.round(+f.presences||0)),
           wins:Math.max(0,Math.round(+f.wins||0)),
           goals:Math.max(0,Math.round(+f.goals||0)),
           mvps:Math.max(0,Math.round(+f.mvps||0)),
-          exists:(players||[]).some(p=>norm(p.name)===norm(name))});
+          exists:!!gia};
+        /* la controprova: cosa c'è adesso, e quali numeri cambierebbero */
+        if(gia){
+          const st=computeStats(gia,matches);
+          riga.cur={presences:st.presences,wins:st.wins,goals:st.goals,mvps:st.mvps};
+          riga.diff=FIELDS.filter(k=>riga.cur[k]!==riga[k]);
+        }else riga.diff=[];
+        parsed.push(riga);
       }
       if(!parsed.length){setImpErr("Nessuna riga valida. Serve una colonna 'Nome' (poi Presenze, Vittorie, Gol, MVP).");return;}
       setImp({rows:parsed,skipped,sheet:wb.SheetNames[0]});
@@ -1463,39 +1623,71 @@ function PlayersSection({players,matches,isAdmin,myPlayerId,updatePlayers,setPho
                 </div>
                 <div style={{flex:1,minWidth:0}}>
                   {canEdit(p)&&isEd
-                    ?<input value={editName} onChange={e=>setEditName(e.target.value)} autoFocus onKeyDown={e=>e.key==="Enter"&&rename(p.id,editName)} style={{width:"100%",background:C.card2,border:`1px solid ${C.accent}`,color:C.text,borderRadius:6,padding:"7px 10px",fontSize:15,fontFamily:"'DM Sans',sans-serif",fontWeight:700}}/>
+                    ?<input value={editName} onChange={e=>setEditName(e.target.value)} autoFocus onKeyDown={e=>e.key==="Enter"&&salvaEdit(p,s)} style={{width:"100%",background:C.card2,border:`1px solid ${C.accent}`,color:C.text,borderRadius:6,padding:"7px 10px",fontSize:15,fontFamily:"'DM Sans',sans-serif",fontWeight:700}}/>
                     :<div style={{fontWeight:800,fontSize:16,color:C.text}}>{p.name}{p.id===myPlayerId&&<span style={{fontSize:10,color:C.accent,fontWeight:800,marginLeft:6,letterSpacing:1}}>SEI TU</span>}</div>
                   }
                   <div style={{fontSize:12,color:C.muted,marginTop:3}}>Media: <span style={{color:C.accent,fontWeight:700}}>{s.avg.toFixed(2)}</span> · {s.presences} presenze</div>
                 </div>
                 {canEdit(p)&&(
                   <div style={{display:"flex",gap:6,flexShrink:0}}>
-                    {isEd?<Btn onClick={()=>rename(p.id,editName)} small>✓</Btn>
-                      :<button onClick={()=>{setEditId(p.id);setEditName(p.name);}} style={{background:"none",border:`1px solid ${C.border}`,color:C.muted,borderRadius:6,padding:"6px 10px",cursor:"pointer",fontSize:14}}>✏️</button>}
+                    {isEd?<Btn onClick={()=>salvaEdit(p,s)} small>✓</Btn>
+                      :<button onClick={()=>apriEdit(p,s)} style={{background:"none",border:`1px solid ${C.border}`,color:C.muted,borderRadius:6,padding:"6px 10px",cursor:"pointer",fontSize:14}}>✏️</button>}
                     {isAdmin&&<button onClick={()=>setDelP(p)} style={{background:"none",border:`1px solid ${C.red}30`,color:C.red,borderRadius:6,padding:"6px 10px",cursor:"pointer",fontSize:14}}>🗑️</button>}
                   </div>
                 )}
               </div>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",marginTop:16,paddingTop:14,borderTop:`1px solid ${C.border}`}}>
-                {[{l:"PRESENZE",v:s.presences,f:"presences"},{l:"VINTE",v:s.wins,f:"wins"},{l:"GOL",v:s.goals,f:"goals"},{l:"MVP",v:s.mvps,f:"mvps"},{l:"MEDIA",v:s.avg.toFixed(2),f:null}].map((st,i)=>(
-                  <div key={i} style={{textAlign:"center",borderRight:i<4?`1px solid ${C.border}`:"none"}}>
-                    <div style={{fontWeight:800,fontSize:20,color:i===4?C.accent:C.text}}>{st.v}{st.f&&s.base[st.f]!==0&&<span style={{fontSize:9,color:C.accent,verticalAlign:"super"}}>✎</span>}</div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:2,marginTop:16,paddingTop:14,borderTop:`1px solid ${C.border}`}}>
+                {[{l:"PRESENZE",f:"presences"},{l:"VINTE",f:"wins"},{l:"GOL",f:"goals"},{l:"MVP",f:"mvps"},{l:"MEDIA",f:null}].map((st,i)=>{
+                  const media=st.f===null;
+                  const vivo=media?((+editVals.presences||0)>0?((+editVals.wins||0)*3/(+editVals.presences||0)).toFixed(2):"0.00"):null;
+                  return(
+                  <div key={i} style={{textAlign:"center",borderRight:i<4?`1px solid ${C.border}`:"none",padding:"0 2px"}}>
+                    {isEd&&!media
+                      ?<input type="number" min="0" value={editVals[st.f]} onChange={e=>setEditVals(v=>({...v,[st.f]:e.target.value}))}
+                         style={{width:"100%",background:C.card3,border:`1px solid ${C.accent}`,color:C.text,borderRadius:6,padding:"5px 2px",fontSize:14,fontWeight:800,textAlign:"center",fontFamily:"'DM Sans',sans-serif"}}/>
+                      :<div style={{fontWeight:800,fontSize:20,color:media?C.accent:C.text}}>
+                         {media?(isEd?vivo:s.avg.toFixed(2)):s[st.f]}
+                         {st.f&&!isEd&&s.base[st.f]!==0&&<span style={{fontSize:9,color:C.accent,verticalAlign:"super"}}>✎</span>}
+                       </div>}
                     <div style={{fontSize:9,color:C.muted,letterSpacing:.6,marginTop:2}}>{st.l}</div>
-                  </div>
-                ))}
+                  </div>);
+                })}
               </div>
+              {isEd&&(
+                <div style={{display:"flex",alignItems:"center",gap:8,marginTop:10,flexWrap:"wrap"}}>
+                  <div style={{fontSize:11,color:C.muted,flex:1,minWidth:150,lineHeight:1.5}}>Dalle partite: {s.auto.presences}·{s.auto.wins}·{s.auto.goals}·{s.auto.mvps}. Quello che cambi resta come correzione, il resto continua ad aggiornarsi da solo.</div>
+                  <Btn onClick={()=>setEditVals({presences:s.auto.presences,wins:s.auto.wins,goals:s.auto.goals,mvps:s.auto.mvps})} variant="ghost" small>↺ Ricalcola</Btn>
+                  <Btn onClick={()=>setEditId(null)} variant="ghost" small>Annulla</Btn>
+                </div>
+              )}
             </div>
           );
         })
       }
 
-      {delP&&(
+      {delP&&!delSicuro&&(
         <Modal onClose={()=>setDelP(null)}>
           <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:24,letterSpacing:2,color:C.text,marginBottom:10}}>ELIMINARE {delP.name.toUpperCase()}?</div>
-          <div style={{fontSize:13,color:C.muted,marginBottom:18}}>Sparisce dalla rosa e dalla classifica. Le partite già registrate restano, ma non mostreranno più il suo nome.</div>
+          <div style={{fontSize:13,color:C.muted,marginBottom:18,lineHeight:1.6}}>Vuoi davvero togliere <strong style={{color:C.text}}>{delP.name}</strong> dalla competizione? Sparisce dalla rosa e dalla classifica.</div>
           <div style={{display:"flex",gap:8}}>
-            <Btn onClick={()=>setDelP(null)} variant="ghost" style={{flex:1}}>Annulla</Btn>
-            <Btn onClick={async()=>{setBusy(true);await removePlayer(delP.id);setBusy(false);setDelP(null);}} variant="danger" style={{flex:1}}>Elimina</Btn>
+            <Btn onClick={()=>setDelP(null)} variant="ghost" style={{flex:1}}>No</Btn>
+            <Btn onClick={()=>setDelSicuro(true)} variant="danger" style={{flex:1}}>Sì</Btn>
+          </div>
+        </Modal>
+      )}
+
+      {/* seconda conferma: cancellare un giocatore non si annulla */}
+      {delP&&delSicuro&&(
+        <Modal onClose={()=>{setDelP(null);setDelSicuro(false);}}>
+          <div style={{fontSize:40,textAlign:"center",marginBottom:10}}>⚠️</div>
+          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:24,letterSpacing:2,color:C.red,marginBottom:10,textAlign:"center"}}>NON SI TORNA INDIETRO</div>
+          <div style={{fontSize:13,color:C.muted,marginBottom:18,lineHeight:1.6}}>
+            Questa azione è irreversibile: statistiche e foto di <strong style={{color:C.text}}>{delP.name}</strong> vengono cancellate.
+            Le partite già registrate restano, ma senza il suo nome. Sei sicuro?
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            <Btn onClick={()=>{setDelP(null);setDelSicuro(false);}} variant="ghost" style={{flex:1}}>No, lascia stare</Btn>
+            <Btn onClick={async()=>{setBusy(true);await removePlayer(delP.id);setBusy(false);setDelP(null);setDelSicuro(false);}} disabled={busy} variant="danger" style={{flex:1}}>{busy?"…":"Sì, elimina"}</Btn>
           </div>
         </Modal>
       )}
@@ -1503,17 +1695,31 @@ function PlayersSection({players,matches,isAdmin,myPlayerId,updatePlayers,setPho
       {imp&&(
         <Modal onClose={()=>setImp(null)}>
           <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:24,letterSpacing:2,color:C.text,marginBottom:4}}>IMPORT EXCEL</div>
-          <div style={{fontSize:12,color:C.muted,marginBottom:14}}>
+          <div style={{fontSize:12,color:C.muted,marginBottom:14,lineHeight:1.6}}>
             Foglio "{imp.sheet}" · <strong style={{color:C.accent}}>{imp.rows.filter(r=>!r.exists).length}</strong> nuovi,
-            {" "}<strong style={{color:C.text}}>{imp.rows.filter(r=>r.exists).length}</strong> da aggiornare
+            {" "}<strong style={{color:C.text}}>{imp.rows.filter(r=>r.exists).length}</strong> già in rosa
             {imp.skipped>0&&<> · {imp.skipped} righe ignorate</>}
+            <br/>
+            {imp.rows.some(r=>r.diff.length>0)
+              ?<>In <strong style={{color:C.red}}>{imp.rows.filter(r=>r.diff.length>0).length}</strong> ci sono numeri diversi da quelli di adesso: li vedi qui sotto <span style={{color:C.accent}}>da → a</span>.</>
+              :<>I numeri dell'Excel coincidono con quelli già in app: non cambierà niente.</>}
           </div>
           <div style={{maxHeight:230,overflowY:"auto",marginBottom:14,border:`1px solid ${C.border}`,borderRadius:8}}>
             {imp.rows.map((r,i)=>(
-              <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",borderBottom:i<imp.rows.length-1?`1px solid ${C.border}`:"none"}}>
-                <span style={{flex:1,fontSize:13,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.name}</span>
-                <span style={{fontSize:11,color:C.muted}}>{r.presences}·{r.wins}·{r.goals}·{r.mvps}</span>
-                {!r.exists&&<Tag>NUOVO</Tag>}
+              <div key={i} style={{padding:"8px 10px",borderBottom:i<imp.rows.length-1?`1px solid ${C.border}`:"none"}}>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{flex:1,fontSize:13,color:C.text,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.name}</span>
+                  {!r.exists?<Tag>NUOVO</Tag>:r.diff.length>0?<Tag color={C.red}>CAMBIA</Tag>:<span style={{fontSize:10,color:C.muted}}>uguale</span>}
+                </div>
+                <div style={{fontSize:11,color:C.muted,marginTop:3,display:"flex",gap:10,flexWrap:"wrap"}}>
+                  {FIELDS.map(k=>(
+                    <span key={k}>{SHORT[k]}{" "}
+                      {r.cur&&r.cur[k]!==r[k]
+                        ?<><span style={{textDecoration:"line-through"}}>{r.cur[k]}</span> <strong style={{color:C.accent}}>→ {r[k]}</strong></>
+                        :<strong style={{color:C.text}}>{r[k]}</strong>}
+                    </span>
+                  ))}
+                </div>
               </div>
             ))}
           </div>
@@ -1567,6 +1773,7 @@ function CialtronApp(){
   const [photoCache,setPhotoCache]=useState({});
   const [tab,setTab]=useState("standings");
   const [panel,setPanel]=useState(null);
+  const [prefill,setPrefill]=useState(null);   // squadre passate dalla selezione alla registrazione
   const [toast,setToast]=useState("");
   const [live,setLive]=useState(false);
   const [invite,setInvite]=useState(inviteFromUrl);
@@ -1844,8 +2051,21 @@ function CialtronApp(){
   /* ─── schermate d'ingresso ─── */
   const matchDate=useMemo(()=>nextMatch(board.settings),[board.settings]);
   const matchIso=isoDate(matchDate);
-  const {capId,pickId,capManual,pickManual}=useMemo(()=>rolesOf(standings,board.settings),[standings,board.settings]);
+  /* chi ha detto che c'è: è da qui che si pesca per fare le squadre */
+  const availableIds=useMemo(()=>{
+    const g=board.callups[matchIso]||{};
+    return Object.keys(g).filter(id=>g[id]&&g[id].v==="si");
+  },[board.callups,matchIso]);
+  /* chi scende in campo: i disponibili della convocazione, salvo diverso
+     accordo del gruppo (playAll). Su questi si calcolano capitano e formatore. */
+  const eligible=useMemo(()=>{
+    const disp=standings.filter(p=>availableIds.indexOf(p.id)>=0);
+    return (!board.settings.playAll&&disp.length>=2)?disp:standings;
+  },[standings,availableIds,board.settings.playAll]);
+  const {capId,pickId,capManual,pickManual}=useMemo(()=>rolesOf(eligible,board.settings),[eligible,board.settings]);
   const rispostaMia=myPlayerId?((board.callups[matchIso]||{})[myPlayerId]||{}).v:null;
+  const usaSquadre=useCallback((w,b)=>{setPrefill({white:w,black:b});setTab("match");say("Squadre portate nella registrazione");},[say]);
+  const prefillUsato=useCallback(()=>setPrefill(null),[]);
 
   if(!cfg)return <ConfigScreen pendingInvite={invite} onCfg={(c,code)=>{setCfg(c);setSb(makeClient(c));if(code)setInvite(code);}}/>;
   if(!sb)return(
@@ -1925,9 +2145,12 @@ function CialtronApp(){
         {tab==="standings"&&<StandingsSection standings={standings} isAdmin={isAdmin} updatePlayers={updatePlayers} capId={capId} pickId={pickId}/>}
         {tab==="callup"   &&<CallupSection players={playersView} board={board} matchDate={matchDate} members={members} myPlayerId={myPlayerId} say={say}
                               setCallup={(pid,v)=>setCallup(pid,v,matchIso)} setSettings={setSettings}/>}
-        {tab==="match"    &&<MatchSection players={playersView} matches={matches} isAdmin={isAdmin} saveMatches={saveMatches}/>}
+        {tab==="match"    &&<MatchSection players={playersView} matches={matches} isAdmin={isAdmin} saveMatches={saveMatches}
+                              prefill={prefill} onPrefillUsed={prefillUsato}/>}
         {tab==="teams"    &&<TeamsSection standings={standings} teamSel={teamSel} setSel={setSel} myPlayerId={myPlayerId} isAdmin={isAdmin}
-                              capId={capId} pickId={pickId} capManual={capManual} pickManual={pickManual} setSettings={setSettings}/>}
+                              capId={capId} pickId={pickId} capManual={capManual} pickManual={pickManual} setSettings={setSettings}
+                              availableIds={availableIds} eligible={eligible} playAll={!!board.settings.playAll}
+                              onUseTeams={isAdmin?usaSquadre:null}/>}
         {tab==="players"  &&<PlayersSection players={playersView} matches={matches} isAdmin={isAdmin} myPlayerId={myPlayerId}
                               updatePlayers={updatePlayers} setPhoto={setPhoto} removePlayer={removePlayer}/>}
         <div style={{textAlign:"center",fontSize:10,color:"#3A3A3A",marginTop:28,letterSpacing:1}}>v{APP_VERSION}</div>
