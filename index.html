@@ -96,8 +96,12 @@ const BAKED_CFG={
 const isBaked=()=>!!(BAKED_CFG.url&&BAKED_CFG.key);
 
 const loadCfg=()=>{
+  /* Il progetto scritto nell'app vince sempre: quello eventualmente digitato a
+     mano in passato è un residuo, e senza questa precedenza chi avesse
+     sbagliato a incollarlo resterebbe bloccato senza un modo per rimediare. */
+  if(isBaked())return{url:BAKED_CFG.url,key:BAKED_CFG.key};
   try{const c=JSON.parse(localStorage.getItem(CFG_KEY)||"null");if(c&&c.url&&c.key)return c;}catch(e){}
-  return isBaked()?{url:BAKED_CFG.url,key:BAKED_CFG.key}:null;
+  return null;
 };
 const saveCfg=c=>{try{localStorage.setItem(CFG_KEY,JSON.stringify(c));}catch(e){}};
 
