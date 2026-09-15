@@ -85,6 +85,7 @@ Chi crea il gruppo ne è il proprietario, è sempre admin e non è degradabile.
 * **Classifica** — tre classifiche dagli stessi numeri, con lo switcher in alto: **generale** ordinata per **media** (punti ÷ presenze: 6 punti in 2 partite fa 3.00 e sta sopra a 3 punti in 2 partite, che fa 1.50), **marcatori** per gol e **MVP** per premi. I punti sono 3 per vittoria, e il pareggio non esiste. La maglia nera in fondo vale solo nella generale. Badge CAP e PICK, correzione manuale con ✏️. Compatta sotto i 460 px, tabellare sopra
 * **Classifica in PDF** — dal tasto in fondo alla classifica esce un foglio A4 con podio, foto, tutte e tre le classifiche e i numeri della stagione. La libreria si scarica solo quando si preme il tasto (serve la rete la prima volta). Sul telefono si apre il menu di condivisione, così va dritta nel gruppo; altrove si scarica come file
 * **Rosa** — un tocco sulla foto la apre grande, e da lì "Modifica" per scattarne una nuova o prenderla dalle foto del telefono; "Togli la foto" torna all'iniziale colorata
+* **Partita dal vivo** — codice usa-e-getta per segnare i gol dall'**Apple Watch** mentre si gioca: punteggio e marcatori arrivano in tempo reale su tutti i telefoni, e a fine partita entrano già compilati nella registrazione. Vedi *Segnare dal polso* più sotto
 * **Partite** — 3 step: squadre → **risultato** → MVP e gol, con **Avanti e Indietro** a ogni passo e niente che si perde tornando sui propri passi. Il vincitore si ricava dal punteggio: 3 punti a chi vince, e un punteggio pari non si può salvare. I gol si assegnano squadra per squadra, con il contatore "quanti di quanti" accanto a ognuna (avvisa se non tornano, non blocca: le autoreti esistono). Prima di scrivere in storico compare un **riepilogo da confermare**, e da lì in poi la partita si **riapre con ✏️** per correggere risultato, gol o MVP: resta la stessa partita, e classifica e statistiche si rifanno da sole
 * **Convocazione** — la prossima partita (di serie il **giovedì**) con chi c'è e chi no, modificabile da chiunque fino all'ultimo. La domanda "ci sei?" comincia a girare dal **giorno d'avviso** — di serie la domenica prima — e ti segue in cima a ogni schermata finché non rispondi. Giorno di gioco, giorno d'avviso e orario li cambia chiunque dalla scheda
 * **Avvisi di turno** — un'app senza server non può mandare notifiche vere: al loro posto, chi deve fare qualcosa se lo trova scritto in cima a ogni schermata. *Tocca a te chiamare* durante la chiamata alternata, *le squadre sono pronte, scegli con quale giocare* quando il formatore ha finito la cava
@@ -99,6 +100,46 @@ Chi crea il gruppo ne è il proprietario, è sempre admin e non è degradabile.
 * **Rosa** — foto dal telefono (ritagliata a 160 px, JPEG 65 %), 5 statistiche calcolate e modificabili al volo con la matita, senza passare dall'Excel
 * **Import Excel** — `Nome · Presenze · Vittorie · Gol · MVP`, con anteprima che confronta riga per riga i numeri del foglio con quelli già in app (`20 → 22`) prima di scrivere niente
 * **Migrazione** — porta dentro rosa, partite e foto dal vecchio database Firebase
+
+## Segnare dal polso (Apple Watch)
+
+Chi gioca non ha il telefono in mano. Con una **scorciatoia** (app Comandi Rapidi, che gira
+anche su Apple Watch) i gol si segnano dal quadrante e arrivano nell'app in tempo reale,
+su tutti i telefoni del gruppo. Non serve un'app nativa, né un Mac, né l'iscrizione da
+sviluppatore: la scorciatoia chiama una funzione del database.
+
+**Come sta in piedi.** Chi apre la partita dal vivo riceve un **codice di 5 caratteri**
+(`live_open`). Quel codice è l'unica credenziale che gira sull'orologio: vale solo per
+quella partita, scade da solo dopo 8 ore, e con esso si può fare una cosa sola —
+aggiungere o togliere un gol (`live_goal` / `live_undo`, chiamabili con la chiave
+pubblica). Non legge la rosa, non tocca la classifica, non vede nient'altro; aprirne una
+nuova chiude la precedente. Le righe stanno in `live_matches` e `live_goals`, una riga per
+gol, così due tocchi ravvicinati non si sovrascrivono.
+
+**La squadra non si chiede.** Se la diretta viene aperta dalla schermata Squadre, il
+database sa già chi gioca con chi: dall'orologio basta il **nome**. Davanti al nome si può
+comunque mettere `⬜` o `⬛` per dirla, e la stessa casella accetta `⬜ senza nome`
+(punteggio senza marcatore) e `annulla` (toglie l'ultimo gol). La risposta torna al polso
+già pronta da leggere: `⬜ 3 - 2 ⬛   Pedro`.
+
+**La scorciatoia, una volta sola** (iPhone → Comandi Rapidi → +):
+
+1. **Testo** — l'elenco dei nomi, uno per riga, più `⬜ senza nome`, `⬛ senza nome`, `Annulla ultimo`
+2. **Dividi testo** — separatore *Nuove righe*
+3. **Scegli da un elenco**
+4. **Ottieni contenuto di URL** — `POST` su `https://<progetto>.supabase.co/rest/v1/rpc/live_goal`,
+   intestazioni `apikey: <chiave pubblica>` e `Content-Type: application/json`,
+   corpo JSON `{"p_token":"<codice>","p_who":"<risultato del passo 3>"}`
+5. **Mostra risultato** — il campo `testo` della risposta
+
+Il comando compare nell'app Comandi Rapidi dell'orologio e si può mettere sul quadrante.
+L'app mostra URL, chiave, elenco e corpo già pronti da copiare: Partite → *Come si prepara
+l'orologio*.
+
+**Quello che non copre.** Il cronometro del cambio porta ogni 5 minuti resta fuori: per
+quello va bene una qualsiasi app da intervalli sul Watch, che vibra al polso anche mentre
+si gioca. E se l'orologio in quel momento non raggiunge il telefono, il tocco si perde e la
+scorciatoia lo dice: si ripreme, oppure si sistema dopo dall'app.
 
 ## Primo avvio
 

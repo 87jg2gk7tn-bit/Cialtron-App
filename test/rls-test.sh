@@ -93,6 +93,55 @@ as $A "select set_callup('$GID','$VECCHIA','p9','si');" >/dev/null
 as $A "select set_callup('$GID','$D','p9','si');" >/dev/null
 ok "le convocazioni vecchie vengono potate" "$(as $A "select callups ? '$VECCHIA' from board where group_id='$GID';")" "f"
 
+echo "— SEGNARE DAL POLSO —"
+# l'orologio non fa login: parla col database usando la sola chiave pubblica,
+# che qui è il ruolo "ospite". Deve poter fare una cosa sola, con il codice.
+POLSO="psql -h ${PGHOST:-/tmp} -p ${PGPORT:-5555} -U ospite -d ${PGDATABASE:-postgres} -X -q -t -A"
+orologio(){ $POLSO -c "$*" 2>&1 | tail -n +1; }
+orologio_fallisce(){ local out; out=$(orologio "$2"); if echo "$out"|grep -qi 'error\|denied\|exception\|permission'; then echo "  ✓ $1"; OK=$((OK+1)); else echo "  ✗ $1  → non ha dato errore: $out"; KO=$((KO+1)); fi }
+
+# una rosa vera nel gruppo, per far risolvere i nomi
+as $A "update groups set data='{\"players\":[{\"id\":\"pm\",\"name\":\"Mera\"},{\"id\":\"pp\",\"name\":\"Pedro\"}],\"matches\":[]}'::jsonb where id='$GID';" >/dev/null
+TOK=$(as $C "select live_open('$GID','[\"pm\"]'::jsonb,'[\"pp\"]'::jsonb);")
+ok "un giocatore qualunque apre la partita dal vivo" "$(echo -n $TOK | grep -cE '^[A-Z0-9]{5}$')" "1"
+deve_fallire "un estraneo non apre niente" $E "select live_open('$GID');"
+orologio_fallisce "l'orologio non può aprire una partita" "select live_open('$GID');"
+
+# dal polso si manda solo il nome: la squadra la sa il database
+ok "l'orologio segna col solo nome" "$(orologio "select live_goal('$TOK','Pedro')->>'chi';")" "Pedro"
+ok "e lo mette nella squadra giusta" "$(as $A "select team from live_goals where token='$TOK' order by id desc limit 1;")" "black"
+ok "il nome diventa il giocatore giusto" "$(as $A "select player_id from live_goals where token='$TOK' order by id desc limit 1;")" "pp"
+ok "funziona anche scritto a metà" "$(orologio "select live_goal('$TOK','mer')->>'chi';")" "Mera"
+ok "e Mera finisce coi bianchi" "$(as $A "select team from live_goals where token='$TOK' order by id desc limit 1;")" "white"
+ok "il punteggio torna indietro sul quadrante" "$(orologio "select live_goal('$TOK','⬛ senza nome')->>'testo';")" "⬜ 1 - 2 ⬛   gol senza nome"
+ok "il punteggio lo tiene il database" "$(as $A "select count(*) from live_goals where token='$TOK';")" "3"
+ok "annullare si scrive nella stessa casella" "$(orologio "select live_goal('$TOK','annulla ultimo')->>'chi';")" "senza nome"
+ok "e ne resta uno in meno" "$(as $A "select count(*) from live_goals where token='$TOK';")" "2"
+ok "e anche il gol di prima, coi bianchi che tornano a zero" "$(orologio "select live_undo('$TOK')->>'white';")" "0"
+ok "restano solo i gol veri" "$(as $A "select count(*) from live_goals where token='$TOK';")" "1"
+orologio "select live_goal('$TOK','⬜ Pedro');" >/dev/null
+ok "col simbolo davanti la squadra la decidi tu" "$(as $A "select team from live_goals where token='$TOK' order by id desc limit 1;")" "white"
+
+orologio_fallisce "un codice inventato non apre niente" "select live_goal('ZZZZZ','Pedro');"
+orologio_fallisce "un nome che non esiste è rifiutato" "select live_goal('$TOK','Ronaldo');"
+orologio_fallisce "senza squadra e senza nome non si segna" "select live_goal('$TOK','senza nome');"
+orologio_fallisce "col codice non si leggono i gol" "select count(*) from live_goals;"
+orologio_fallisce "col codice non si legge la rosa" "select count(*) from groups;"
+
+ok "i gol si vedono nel gruppo" "$(as $B "select count(*) from live_goals where token='$TOK';")" "2"
+ok "un estraneo non li vede" "$(as $E "select count(*) from live_goals;")" "0"
+ok "dall'app si toglie un gol storto" "$(as $B "delete from live_goals where token='$TOK'; select count(*) from live_goals where token='$TOK';")" "0"
+
+TOK2=$(as $A "select live_open('$GID');")
+ok "aprirne un'altra chiude la prima" "$(as $A "select closed_at is not null from live_matches where token='$TOK';")" "t"
+orologio_fallisce "sul codice chiuso non si segna più" "select live_goal('$TOK','Pedro');"
+ok "sul codice nuovo sì, dicendo la squadra" "$(orologio "select live_goal('$TOK2','⬛ Mera')->>'testo';")" "⬜ 0 - 1 ⬛   Mera"
+orologio_fallisce "ma senza squadre aperte il nome da solo non basta" "select live_goal('$TOK2','Pedro');"
+as $A "select live_close('$TOK2');" >/dev/null
+orologio_fallisce "chiusa la partita, l'orologio non scrive più" "select live_goal('$TOK2','⬛ Mera');"
+as $A "update live_matches set closed_at=null, expires_at=now()-interval '1 hour' where token='$TOK2';" >/dev/null
+orologio_fallisce "e un codice scaduto non vale" "select live_goal('$TOK2','⬛ Mera');"
+
 echo
 echo "=========================="
 echo "PASSATI: $OK   FALLITI: $KO"
