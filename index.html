@@ -56,7 +56,7 @@ const C={accent:"#B8FF00",bg:"#090909",card:"#111",card2:"#1A1A1A",card3:"#222",
 /* Versione pubblicata: confrontata con version.json per avvisare che c'è
    un aggiornamento. Sul telefono la pagina resta in cache, senza questo
    controllo le modifiche non arriverebbero finché non si svuota la cache. */
-const APP_VERSION="2026-09-15.9";
+const APP_VERSION="2026-09-15.10";
 
 function useUpdateCheck(){
   const [next,setNext]=useState(null);
@@ -184,16 +184,17 @@ function computeStats(player, matches){
     if(iW||iB){
       aP++;
       if((m.winner==="white"&&iW)||(m.winner==="black"&&iB))aW++;
-      else if(m.winner==="draw")aN++;
+      else if(m.winner==="draw")aN++;   // vecchie registrazioni: ora il pari non si può più salvare
     }
     if(m.mvp===player.id)aM++; aG+=m.goals?.[player.id]||0;
   }
   const auto={presences:aP,wins:aW,goals:aG,mvps:aM};
   const b=player.base||{}, base={}, tot={};
   for(const f of FIELDS){base[f]=+b[f]||0; tot[f]=Math.max(0,auto[f]+base[f]);}
-  /* 3 a chi vince, 1 a testa se finisce pari. I pareggi si contano solo dalle
-     partite registrate: nello storico importato da Excel non esistono. */
-  const points=tot.wins*3+aN;
+  /* 3 a chi vince, e basta: qui il pareggio non esiste, si gioca finché non
+     vince qualcuno. Se in archivio è rimasta una partita chiusa in pari conta
+     come presenza e nient'altro — la schermata Partite la segnala. */
+  const points=tot.wins*3;
   return{...tot,draws:aN,points,avg:tot.presences>0?points/tot.presences:0,auto,base};
 }
 
@@ -282,7 +283,9 @@ function Btn({children,onClick,variant="primary",disabled,full,small,style:ex}){
     danger:{background:"transparent",color:C.red,border:`1px solid ${C.red}40`},
     dark:{background:C.card2,color:C.text,border:`1px solid ${C.border}`},
   };
-  return <button onClick={disabled?undefined:onClick} style={{border:"none",borderRadius:8,cursor:disabled?"default":"pointer",fontWeight:700,fontFamily:"'DM Sans',sans-serif",fontSize:small?12:13,padding:small?"6px 12px":"10px 18px",opacity:disabled?.35:1,width:full?"100%":undefined,display:"inline-flex",alignItems:"center",justifyContent:"center",gap:6,...V[variant],...ex}}>{children}</button>;
+  /* disabilitato davvero, non solo sbiadito: se no il telefono lo lascia
+     premere e l'app sembra non rispondere */
+  return <button onClick={disabled?undefined:onClick} disabled={!!disabled} style={{border:"none",borderRadius:8,cursor:disabled?"default":"pointer",fontWeight:700,fontFamily:"'DM Sans',sans-serif",fontSize:small?12:13,padding:small?"6px 12px":"10px 18px",opacity:disabled?.35:1,width:full?"100%":undefined,display:"inline-flex",alignItems:"center",justifyContent:"center",gap:6,...V[variant],...ex}}>{children}</button>;
 }
 
 function Empty({emoji,text}){return <div style={{textAlign:"center",padding:"52px 20px"}}><div style={{fontSize:44,marginBottom:12}}>{emoji}</div><div style={{color:C.muted,fontSize:14}}>{text}</div></div>;}
@@ -795,7 +798,6 @@ function StandingsSection({standings,isAdmin,updatePlayers,capId,pickId}){
                       </div>
                       <div style={{fontSize:11,color:C.muted,marginTop:3,display:"flex",gap:9}}>
                         {FIELDS.map(f=><span key={f}>{SHORT[f]} <strong style={{color:C.text}}>{s[f]}</strong>{s.base[f]!==0&&mark(f)}</span>)}
-                        {s.draws>0&&<span>N <strong style={{color:C.text}}>{s.draws}</strong></span>}
                       </div>
                     </div>
                     {avg}{editBtn}
@@ -871,9 +873,10 @@ function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed
   const [phase,setPhase]=useState("list"), [white,setWhite]=useState([]), [black,setBlack]=useState([]);
   const [sw,setSw]=useState(""), [sb,setSb]=useState("");   // risultato: bianchi - neri
   const [mvp,setMvp]=useState(""), [goals,setGoals]=useState({});
-  /* il vincitore non si chiede: si legge dal punteggio */
-  const esito=(sw===""||sb==="")?"":(+sw>+sb?"white":+sb>+sw?"black":"draw");
-  const winner=esito;
+  /* il vincitore non si chiede: si legge dal punteggio. Pari non è un
+     risultato: si gioca finché non vince qualcuno, quindi non si salva. */
+  const esito=(sw===""||sb==="")?"":(+sw>+sb?"white":+sb>+sw?"black":"pari");
+  const winner=esito==="white"||esito==="black"?esito:"";
   const [busy,setBusy]=useState(false), [delId,setDelId]=useState(null);
   const getP=id=>players.find(p=>p.id===id)||(isExt(id)?extPlayer(id):null);
   const inCampo=players.concat(extra.map(extPlayer));
@@ -931,7 +934,7 @@ function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed
                   <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
                     {["white","black"].map(t=><span key={t} style={{padding:"3px 12px",borderRadius:6,fontSize:12,fontWeight:700,background:m.winner===t?C.accent+"22":C.card2,color:m.winner===t?C.accent:C.muted,border:`1px solid ${m.winner===t?C.accent+"50":C.border}`}}>{t==="white"?"⬜ BIANCHI":"⬛ NERI"} {m.winner===t?"🏆":""}</span>)}
                     {m.scoreWhite!=null&&<span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,letterSpacing:1,color:C.text}}>{m.scoreWhite} – {m.scoreBlack}</span>}
-                    {m.winner==="draw"&&<Tag color={C.muted}>PAREGGIO</Tag>}
+                    {m.winner==="draw"&&<Tag color={C.red}>PARI · NESSUN PUNTO</Tag>}
                   </div>
                   {isAdmin&&<button onClick={()=>setDelId(m.id)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16}}>✕</button>}
                 </div>
@@ -1000,15 +1003,15 @@ function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed
               ))}
             </div>
             <div style={{textAlign:"center",marginTop:12,fontFamily:"'Bebas Neue',sans-serif",fontSize:20,letterSpacing:2,
-                         color:esito==="draw"?C.muted:esito?C.accent:C.border}}>
-              {esito==="draw"?"PAREGGIO":esito==="white"?"VINCONO I BIANCHI":esito==="black"?"VINCONO I NERI":"— — —"}
+                         color:esito==="pari"?C.red:esito?C.accent:C.border}}>
+              {esito==="pari"?"NON PUÒ FINIRE PARI":esito==="white"?"VINCONO I BIANCHI":esito==="black"?"VINCONO I NERI":"— — —"}
             </div>
-            {esito==="draw"&&<div style={{textAlign:"center",fontSize:11,color:C.muted,marginTop:4}}>1 punto a testa</div>}
+            {esito==="pari"&&<div style={{textAlign:"center",fontSize:11,color:C.red,marginTop:4,lineHeight:1.5}}>Il pareggio da noi non esiste: si va avanti finché non vince qualcuno. Sistema il punteggio.</div>}
           </div>
           <div style={{display:"flex",gap:10,marginBottom:16}}>
             {["white","black"].map(t=><TeamCard key={t} t={t} ids={t==="white"?white:black} selected={winner===t}/>)}
           </div>
-          <Btn onClick={()=>setPhase("extra")} disabled={!esito} full style={{padding:"14px 0",fontSize:15,borderRadius:10}}>Avanti →</Btn>
+          <Btn onClick={()=>setPhase("extra")} disabled={!winner} full style={{padding:"14px 0",fontSize:15,borderRadius:10}}>Avanti →</Btn>
         </>
       )}
 
@@ -1847,7 +1850,7 @@ function PlayersSection({players,matches,isAdmin,myPlayerId,updatePlayers,setPho
                     ?<input value={editName} onChange={e=>setEditName(e.target.value)} autoFocus onKeyDown={e=>e.key==="Enter"&&salvaEdit(p,s)} style={{width:"100%",background:C.card2,border:`1px solid ${C.accent}`,color:C.text,borderRadius:6,padding:"7px 10px",fontSize:15,fontFamily:"'DM Sans',sans-serif",fontWeight:700}}/>
                     :<div style={{fontWeight:800,fontSize:16,color:C.text}}>{p.name}{p.id===myPlayerId&&<span style={{fontSize:10,color:C.accent,fontWeight:800,marginLeft:6,letterSpacing:1}}>SEI TU</span>}</div>
                   }
-                  <div style={{fontSize:12,color:C.muted,marginTop:3}}>Media: <span style={{color:C.accent,fontWeight:700}}>{s.avg.toFixed(2)}</span> · {s.presences} presenze{s.draws>0&&<> · {s.draws} {s.draws===1?"pareggio":"pareggi"}</>}</div>
+                  <div style={{fontSize:12,color:C.muted,marginTop:3}}>Media: <span style={{color:C.accent,fontWeight:700}}>{s.avg.toFixed(2)}</span> · {s.presences} presenze</div>
                 </div>
                 {canEdit(p)&&(
                   <div style={{display:"flex",gap:6,flexShrink:0}}>
