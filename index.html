@@ -56,7 +56,7 @@ const C={accent:"#B8FF00",bg:"#090909",card:"#111",card2:"#1A1A1A",card3:"#222",
 /* Versione pubblicata: confrontata con version.json per avvisare che c'è
    un aggiornamento. Sul telefono la pagina resta in cache, senza questo
    controllo le modifiche non arriverebbero finché non si svuota la cache. */
-const APP_VERSION="2026-09-15.13";
+const APP_VERSION="2026-09-15.14";
 
 function useUpdateCheck(){
   const [next,setNext]=useState(null);
@@ -663,10 +663,93 @@ function AccountPanel(props){
         </>
       )}
 
+      <Sub>OROLOGIO</Sub>
+      <PolsoSetup sb={sb} cfg={cfg} group={group} players={players} say={say}/>
+
       <Sub>ALTRO</Sub>
       <Btn onClick={onLeave} variant="danger" full>Esci da questo gruppo</Btn>
       <div style={{textAlign:"center",fontSize:10,color:"#3A3A3A",marginTop:20,letterSpacing:1}}>v{APP_VERSION}</div>
     </Panel>
+  );
+}
+
+/* Preparare l'orologio è roba da una volta sola: sta qui nel pannello
+   dell'account, non fra i piedi mentre si gioca. Il codice del gruppo non
+   cambia, quindi la scorciatoia si costruisce una volta e basta. */
+function PolsoSetup({sb,cfg,group,players,say}){
+  const [aperto,setAperto]=useState(false);
+  const [codice,setCodice]=useState(null);
+  const [busy,setBusy]=useState(false);
+
+  const chiedi=async()=>{
+    setBusy(true);
+    const{data,error}=await sb.rpc('live_code',{p_group:group.id});
+    setBusy(false);
+    if(error){say(errText(error));return;}
+    setCodice(data);setAperto(true);
+  };
+  const cambia=async()=>{
+    setBusy(true);
+    const{data,error}=await sb.rpc('live_rotate',{p_group:group.id});
+    setBusy(false);
+    if(error){say(errText(error));return;}
+    setCodice(data);say("Codice cambiato: aggiorna la scorciatoia");
+  };
+  const copia=(t,che)=>{
+    try{navigator.clipboard.writeText(t).then(()=>say(che+" copiato"),()=>say("Copia non riuscita"));}
+    catch(e){say("Copia non riuscita");}
+  };
+
+  const url=((cfg&&cfg.url)||"https://IL-TUO-PROGETTO.supabase.co")+"/rest/v1/rpc/live_goal";
+  const chiave=(cfg&&cfg.key)||"la-tua-chiave-pubblica";
+  const corpo=`{"p_code":"${codice||"CODICE"}","p_who":"NOME SCELTO"}`;
+  const elenco=(players||[]).map(p=>p.name).concat(["⬜ senza nome","⬛ senza nome","Annulla ultimo"]).join("\n");
+
+  const Riga=({etichetta,valore})=>(
+    <div style={{marginBottom:10}}>
+      <div style={{fontSize:10,color:C.muted,letterSpacing:.6,marginBottom:4}}>{etichetta}</div>
+      <div style={{display:"flex",gap:6,alignItems:"flex-start"}}>
+        <div style={{flex:1,background:C.card2,border:`1px solid ${C.border}`,borderRadius:8,padding:"8px 10px",
+                     fontSize:11,color:C.text,wordBreak:"break-all",fontFamily:"monospace",whiteSpace:"pre-wrap"}}>{valore}</div>
+        <Btn onClick={()=>copia(valore,etichetta)} variant="dark" small style={{flexShrink:0}}>Copia</Btn>
+      </div>
+    </div>
+  );
+
+  if(!aperto)return(
+    <>
+      <div style={{fontSize:12,color:C.muted,lineHeight:1.6,marginBottom:10}}>
+        Se vuoi segnare i gol dall'Apple Watch mentre giochi, qui c'è tutto per costruire la scorciatoia. Si fa una volta sola.
+      </div>
+      <Btn onClick={chiedi} disabled={busy} variant="ghost" full>{busy?"…":"Prepara l'orologio"}</Btn>
+    </>
+  );
+
+  return(
+    <>
+      <div style={{background:C.card2,border:`1px solid ${C.border}`,borderRadius:10,padding:"12px 14px",marginBottom:10,textAlign:"center"}}>
+        <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:30,letterSpacing:6,color:C.accent}}>{codice}</div>
+        <div style={{fontSize:10,color:C.muted,letterSpacing:1}}>CODICE PER L'OROLOGIO</div>
+      </div>
+      <div style={{fontSize:12,color:C.muted,lineHeight:1.7,marginBottom:12}}>
+        Sull'iPhone, <em>Comandi Rapidi</em> → <strong style={{color:C.text}}>+</strong>:<br/>
+        1. <strong style={{color:C.text}}>Testo</strong> con l'elenco qui sotto (un nome per riga)<br/>
+        2. <strong style={{color:C.text}}>Dividi testo</strong>, separatore <em>Nuove righe</em><br/>
+        3. <strong style={{color:C.text}}>Scegli da un elenco</strong><br/>
+        4. <strong style={{color:C.text}}>Ottieni contenuto di URL</strong>: metodo POST, intestazioni <code>apikey</code> e <code>Content-Type: application/json</code>, corpo JSON come sotto<br/>
+        5. <strong style={{color:C.text}}>Mostra risultato</strong> → <code>testo</code><br/>
+        Chiamalo <strong style={{color:C.text}}>GOL</strong>: lo trovi nei Comandi Rapidi dell'orologio e puoi metterlo sul quadrante.
+      </div>
+      <Riga etichetta="ELENCO (PASSO 1)" valore={elenco}/>
+      <Riga etichetta="URL (PASSO 4)" valore={url}/>
+      <Riga etichetta="INTESTAZIONE apikey" valore={chiave}/>
+      <Riga etichetta="CORPO JSON" valore={corpo}/>
+      <div style={{fontSize:11,color:C.muted,lineHeight:1.6,marginBottom:10}}>
+        Dal polso basta il nome: la squadra la mettiamo noi, se le squadre sono già fatte. Davanti al nome puoi scrivere ⬜ o ⬛ per dirla,
+        e nell'elenco "Annulla ultimo" toglie il gol sbagliato. I gol arrivano in Partite come partita in corso.
+      </div>
+      <Btn onClick={cambia} disabled={busy} variant="ghost" full small>Cambia codice</Btn>
+    </>
   );
 }
 
@@ -1179,146 +1262,7 @@ function StepBar({phase}){
   );
 }
 
-/* ═══════════════════════════════════════════════════════
-   SEGNA DAL POLSO — la partita dal vivo
-   Chi gioca non ha il telefono in mano: i gol arrivano da una scorciatoia
-   sull'Apple Watch, che parla col database con un codice usa-e-getta.
-   Qui si apre la diretta, si guarda arrivare, e si porta nella registrazione.
-═══════════════════════════════════════════════════════ */
-function PolsoPanel({diretta,players,squadre,apriDiretta,chiudiDiretta,togliGolDiretta,cfg,say,onUsa}){
-  const [ricetta,setRicetta]=useState(false);
-  const [busy,setBusy]=useState(false);
-  const [chiedi,setChiedi]=useState(false);
-
-  const nomeDi=id=>{const p=(players||[]).find(x=>x.id===id);return p?p.name:(isExt(id)?extName(id):null);};
-  const gol=(diretta&&diretta.goals)||[];
-  const w=gol.filter(g=>g.team==="white").length, b=gol.filter(g=>g.team==="black").length;
-  const conSquadre=!!(diretta&&(diretta.white||[]).length&&(diretta.black||[]).length);
-
-  const copia=(testo,che)=>{
-    try{navigator.clipboard.writeText(testo).then(()=>say(che+" copiato"),()=>say("Copia non riuscita"));}
-    catch(e){say("Copia non riuscita");}
-  };
-  const apri=async()=>{setBusy(true);await apriDiretta((squadre&&squadre.white)||[],(squadre&&squadre.black)||[]);setBusy(false);};
-
-  const urlGol=((cfg&&cfg.url)||"https://IL-TUO-PROGETTO.supabase.co")+"/rest/v1/rpc/live_goal";
-  const chiave=(cfg&&cfg.key)||"la-tua-chiave-pubblica";
-  const corpo=`{"p_token":"${diretta?diretta.token:"CODICE"}","p_who":"NOME SCELTO"}`;
-  const elenco=(players||[]).map(p=>p.name).concat(["⬜ senza nome","⬛ senza nome","Annulla ultimo"]).join("\n");
-
-  const Riga=({etichetta,valore,che})=>(
-    <div style={{marginBottom:10}}>
-      <div style={{fontSize:10,color:C.muted,letterSpacing:.6,marginBottom:4}}>{etichetta}</div>
-      <div style={{display:"flex",gap:6,alignItems:"flex-start"}}>
-        <div style={{flex:1,background:C.card2,border:`1px solid ${C.border}`,borderRadius:8,padding:"8px 10px",
-                     fontSize:11,color:C.text,wordBreak:"break-all",fontFamily:"monospace",whiteSpace:"pre-wrap"}}>{valore}</div>
-        <Btn onClick={()=>copia(valore,che||etichetta)} variant="dark" small style={{flexShrink:0}}>Copia</Btn>
-      </div>
-    </div>
-  );
-
-  return(
-    <div style={{background:C.card,border:`1px solid ${diretta?C.accent+"45":C.border}`,borderRadius:14,padding:16,marginBottom:16}}>
-      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:diretta?14:8}}>
-        <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,letterSpacing:2,color:diretta?C.accent:C.text}}>⌚︎ SEGNA DAL POLSO</div>
-        {diretta&&<span style={{fontSize:9,fontWeight:800,letterSpacing:1,color:C.accent,border:`1px solid ${C.accent}45`,borderRadius:4,padding:"2px 6px"}}>IN CORSO</span>}
-      </div>
-
-      {!diretta?(
-        <>
-          <div style={{fontSize:12,color:C.muted,lineHeight:1.6,marginBottom:12}}>
-            Mentre giochi non hai il telefono in mano: apri la partita dal vivo, tieni il codice nella scorciatoia dell'orologio
-            e segna i gol da lì. Qui si aggiornano per tutti, e a fine partita risultato e marcatori sono già scritti.
-            {(!squadre||!squadre.white||!squadre.white.length)&&<div style={{marginTop:6,color:C.muted}}>
-              Meglio aprirla <strong style={{color:C.text}}>dopo aver fatto le squadre</strong>: così dall'orologio basta il nome e la squadra la sappiamo noi.
-            </div>}
-          </div>
-          <Btn onClick={apri} disabled={busy} full style={{padding:"12px 0",borderRadius:10}}>{busy?"Apro…":"Apri la partita dal vivo"}</Btn>
-        </>
-      ):(
-        <>
-          <div style={{display:"flex",gap:10,marginBottom:12}}>
-            <div style={{flex:1,background:C.card2,border:`1px solid ${C.border}`,borderRadius:12,padding:"10px 8px",textAlign:"center"}}>
-              <div style={{fontSize:9,color:C.muted,letterSpacing:1,marginBottom:4}}>CODICE PARTITA</div>
-              <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:30,letterSpacing:6,color:C.accent,lineHeight:1}}>{diretta.token}</div>
-            </div>
-            <div style={{flex:1,background:C.card2,border:`1px solid ${C.border}`,borderRadius:12,padding:"10px 8px",textAlign:"center"}}>
-              <div style={{fontSize:9,color:C.muted,letterSpacing:1,marginBottom:4}}>PUNTEGGIO</div>
-              <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:30,letterSpacing:1,color:C.text,lineHeight:1}}>⬜ {w} – {b} ⬛</div>
-            </div>
-          </div>
-
-          {gol.length===0
-            ?<div style={{fontSize:12,color:C.muted,textAlign:"center",padding:"10px 0 14px",lineHeight:1.6}}>
-               Nessun gol ancora. Il primo che arriva dall'orologio compare qui da solo.
-             </div>
-            :<div style={{marginBottom:12}}>
-               {gol.slice().reverse().map(g=>(
-                 <div key={g.id} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 0",borderBottom:`1px solid ${C.border}`}}>
-                   <span style={{fontSize:13}}>{g.team==="white"?"⬜":"⬛"}</span>
-                   <span style={{flex:1,fontSize:13,color:g.player_id?C.text:C.muted,fontWeight:g.player_id?600:400}}>
-                     {nomeDi(g.player_id)||g.who||"gol senza nome"}
-                   </span>
-                   <span style={{fontSize:10,color:C.muted}}>{new Date(g.created_at).toLocaleTimeString("it-IT",{hour:"2-digit",minute:"2-digit"})}</span>
-                   <button onClick={()=>togliGolDiretta(g.id)} title="Togli questo gol"
-                     style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:14,padding:"0 2px"}}>✕</button>
-                 </div>
-               ))}
-             </div>}
-
-          <div style={{display:"flex",gap:8,marginBottom:10}}>
-            <Btn onClick={()=>setChiedi(true)} variant="ghost" style={{flex:1}}>Chiudi la diretta</Btn>
-            <Btn onClick={onUsa} disabled={!gol.length&&!conSquadre} style={{flex:2}}>Registra con questi dati →</Btn>
-          </div>
-        </>
-      )}
-
-      <button onClick={()=>setRicetta(v=>!v)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",
-               fontSize:11,fontFamily:"'DM Sans',sans-serif",padding:"6px 0",textDecoration:"underline"}}>
-        {ricetta?"Chiudi le istruzioni":"Come si prepara l'orologio (una volta sola)"}
-      </button>
-
-      {ricetta&&(
-        <div style={{borderTop:`1px solid ${C.border}`,marginTop:8,paddingTop:12,fontSize:12,color:C.muted,lineHeight:1.7}}>
-          <div style={{color:C.text,fontWeight:700,marginBottom:8}}>Sull'iPhone, app <em>Comandi Rapidi</em> → <strong>+</strong></div>
-          <div style={{marginBottom:10}}>
-            1. Azione <strong style={{color:C.text}}>Testo</strong>: incolla l'elenco qui sotto (un nome per riga).<br/>
-            2. Azione <strong style={{color:C.text}}>Dividi testo</strong>, separatore <em>Nuove righe</em>.<br/>
-            3. Azione <strong style={{color:C.text}}>Scegli da un elenco</strong>.<br/>
-            4. Azione <strong style={{color:C.text}}>Ottieni contenuto di URL</strong>: metodo <strong style={{color:C.text}}>POST</strong>,
-               intestazioni <code>apikey</code> e <code>Content-Type: application/json</code>, corpo <em>JSON</em> con
-               <code> p_token</code> e <code>p_who</code> (il risultato del passo 3).<br/>
-            5. Azione <strong style={{color:C.text}}>Mostra risultato</strong>: <code>testo</code> della risposta.<br/>
-            6. Chiama il comando <strong style={{color:C.text}}>GOL</strong>: lo trovi nell'app Comandi Rapidi dell'orologio, e puoi metterlo sul quadrante.
-          </div>
-          <Riga etichetta="ELENCO DA INCOLLARE NEL PASSO 1" valore={elenco} che="Elenco"/>
-          <Riga etichetta="URL (PASSO 4)" valore={urlGol} che="Indirizzo"/>
-          <Riga etichetta="INTESTAZIONE apikey" valore={chiave} che="Chiave"/>
-          <Riga etichetta="CORPO JSON" valore={corpo} che="Corpo"/>
-          <div style={{marginTop:6}}>
-            Nell'elenco "Annulla ultimo" toglie il gol sbagliato, e "⬜ / ⬛ senza nome" fa punteggio senza dare il gol a nessuno.
-            Il codice partita cambia a ogni diretta: quando lo cambi, aggiorna <code>p_token</code> nella scorciatoia.
-          </div>
-        </div>
-      )}
-
-      {chiedi&&(
-        <Modal onClose={()=>setChiedi(false)}>
-          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,letterSpacing:2,color:C.text,marginBottom:10}}>CHIUDERE LA DIRETTA?</div>
-          <div style={{fontSize:13,color:C.muted,marginBottom:16,lineHeight:1.6}}>
-            Il codice smette di funzionare e l'orologio non potrà più segnare. I gol arrivati restano finché non registri la partita.
-          </div>
-          <div style={{display:"flex",gap:8}}>
-            <Btn onClick={()=>setChiedi(false)} variant="ghost" style={{flex:1}}>No</Btn>
-            <Btn onClick={async()=>{setChiedi(false);await chiudiDiretta();}} variant="danger" style={{flex:1}}>Sì, chiudi</Btn>
-          </div>
-        </Modal>
-      )}
-    </div>
-  );
-}
-
-function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed,diretta,apriDiretta,chiudiDiretta,togliGolDiretta,cfg,say}){
+function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed,golVivo,squadreFatte,togliGolVivo,azzeraGolVivo}){
   const [extra,setExtra]=useState([]);   // esterni aggiunti al volo per questa partita
   const [phase,setPhase]=useState("list"), [white,setWhite]=useState([]), [black,setBlack]=useState([]);
   const [sw,setSw]=useState(""), [sb,setSb]=useState("");   // risultato: bianchi - neri
@@ -1338,17 +1282,17 @@ function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed
   const reset=()=>{setPhase("list");setWhite([]);setBlack([]);setSw("");setSb("");setMvp("");setGoals({});setExtra([]);
                    setModId(null);setConferma(false);};
 
-  /* Dalla diretta alla registrazione: squadre, punteggio e marcatori sono già
+  /* Dalla partita in corso alla registrazione: punteggio e marcatori sono già
      tutti lì, resta da confermare. I gol senza nome fanno punteggio e basta. */
-  const usaDiretta=()=>{
-    if(!diretta)return;
-    const gw=diretta.goals.filter(g=>g.team==="white"), gb=diretta.goals.filter(g=>g.team==="black");
-    const w=(diretta.white||[]).slice(), b=(diretta.black||[]).slice();
+  const vivi=golVivo||[];
+  const usaVivi=()=>{
+    const gw=vivi.filter(g=>g.team==="white").length, gb=vivi.filter(g=>g.team==="black").length;
+    const w=((squadreFatte&&squadreFatte.white)||[]).slice(), b=((squadreFatte&&squadreFatte.black)||[]).slice();
     const g={};
-    diretta.goals.forEach(x=>{if(x.player_id)g[x.player_id]=String((+g[x.player_id]||0)+1);});
+    vivi.forEach(x=>{if(x.player_id)g[x.player_id]=String((+g[x.player_id]||0)+1);});
     setExtra(w.concat(b).filter(isExt));
     setWhite(w);setBlack(b);
-    setSw(String(gw.length));setSb(String(gb.length));
+    setSw(String(gw));setSb(String(gb));
     setGoals(g);setMvp("");setModId(null);setConferma(false);
     setPhase(w.length&&b.length?"winner":"teams");
   };
@@ -1386,6 +1330,8 @@ function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed
     await saveMatches(modId
       ?lista.map(m=>m.id===modId?Object.assign({},m,dati):m)
       :lista.concat([Object.assign({id:uid(),date:new Date().toISOString()},dati)]));
+    /* registrata la partita, quella "in corso" ha finito il suo lavoro */
+    if(!modId&&vivi.length&&azzeraGolVivo)await azzeraGolVivo();
     setBusy(false);reset();
   };
   const deleteMatch=async id=>{
@@ -1416,9 +1362,35 @@ function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed
 
       {phase==="list"&&(
         <>
-          <PolsoPanel diretta={diretta} players={players} squadre={{white,black}} apriDiretta={apriDiretta}
-                      chiudiDiretta={chiudiDiretta} togliGolDiretta={togliGolDiretta}
-                      cfg={cfg} say={say} onUsa={usaDiretta}/>
+          {vivi.length>0&&(
+            <div style={{background:C.card,border:`1px solid ${C.accent}45`,borderRadius:14,padding:16,marginBottom:16}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
+                <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,letterSpacing:2,color:C.accent}}>PARTITA IN CORSO</div>
+                <span style={{width:7,height:7,borderRadius:"50%",background:C.accent,display:"inline-block"}}/>
+              </div>
+              <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:40,letterSpacing:1,color:C.text,textAlign:"center",lineHeight:1}}>
+                ⬜ {vivi.filter(g=>g.team==="white").length} – {vivi.filter(g=>g.team==="black").length} ⬛
+              </div>
+              <div style={{margin:"14px 0 4px"}}>
+                {vivi.slice().reverse().map(g=>{
+                  const p=(players||[]).find(x=>x.id===g.player_id);
+                  return(
+                    <div key={g.id} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 0",borderBottom:`1px solid ${C.border}`}}>
+                      <span style={{fontSize:13}}>{g.team==="white"?"⬜":"⬛"}</span>
+                      <span style={{flex:1,fontSize:13,color:p?C.text:C.muted,fontWeight:p?600:400}}>{(p&&p.name)||g.who||"gol senza nome"}</span>
+                      <span style={{fontSize:10,color:C.muted}}>{new Date(g.created_at).toLocaleTimeString("it-IT",{hour:"2-digit",minute:"2-digit"})}</span>
+                      <button onClick={()=>togliGolVivo(g.id)} title="Togli questo gol"
+                        style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:14,padding:"0 2px"}}>✕</button>
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{display:"flex",gap:8,marginTop:12}}>
+                <Btn onClick={azzeraGolVivo} variant="ghost" style={{flex:1}}>Azzera</Btn>
+                <Btn onClick={usaVivi} style={{flex:2}}>Registra la partita →</Btn>
+              </div>
+            </div>
+          )}
           {isAdmin&&<Btn onClick={()=>setPhase("teams")} disabled={(players||[]).length<2} full style={{padding:"13px 0",fontSize:15,borderRadius:10,marginBottom:18}}>＋ Nuova partita</Btn>}
           {!matches||matches.length===0?<Empty emoji="⚽" text="Nessuna partita ancora."/>:
             [...(matches||[])].reverse().map(m=>(
@@ -1819,7 +1791,7 @@ const isExt=id=>/^ext\d+$/.test(String(id||""));
 const extName=id=>"Esterno "+String(id).slice(3);
 const extPlayer=id=>({id,name:extName(id),ext:true});
 
-function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capId,pickId,capManual,pickManual,decaduti,setSettings,availableIds,playAll,onUseTeams,onDiretta,onAggiungi}){
+function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capId,pickId,capManual,pickManual,decaduti,setSettings,availableIds,playAll,onUseTeams,onAggiungi}){
   const [scegli,setScegli]=useState(false);
   const [agg,setAgg]=useState(false);
   const [modifica,setModifica]=useState(false);
@@ -2230,15 +2202,6 @@ function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capI
                   {(!fW.length||!fB.length)&&<div style={{fontSize:11,color:C.muted,textAlign:"center",marginBottom:8}}>Una delle due squadre è vuota.</div>}
                 </>
               )}
-              {onDiretta&&(
-                <>
-                  <Btn onClick={()=>onDiretta(fW,fB)} disabled={!fW.length||!fB.length} variant="ghost" full
-                       style={{marginBottom:6,color:C.accent,border:`1px solid ${C.accent}40`}}>⌚︎ Apri la partita dal vivo</Btn>
-                  <div style={{fontSize:11,color:C.muted,textAlign:"center",marginBottom:10,lineHeight:1.5}}>
-                    Per segnare i gol dall'orologio mentre giocate: con le squadre già fatte, dal polso basta il nome.
-                  </div>
-                </>
-              )}
               {(ioPicker||ioCapitano)&&<Btn onClick={reset} variant="ghost" full>Rifai da capo la selezione</Btn>}
             </>
           ):(
@@ -2606,7 +2569,8 @@ function CialtronApp(){
   const [tab,setTab]=useState("standings");
   const [panel,setPanel]=useState(null);
   const [prefill,setPrefill]=useState(null);   // squadre passate dalla selezione alla registrazione
-  const [diretta,setDiretta]=useState(null);   // partita dal vivo: codice e gol dall'orologio
+  const [golVivo,setGolVivo]=useState([]);     // gol arrivati dall'orologio, partita in corso
+  const golVivoRef=useRef([]);
   const carica=useRef(null);                   // per non rifare il canale a ogni ricalcolo
   const [toast,setToast]=useState("");
   const [live,setLive]=useState(false);
@@ -2726,8 +2690,6 @@ function CialtronApp(){
           ()=>{sb.from('group_members').select('*').eq('group_id',groupId).then(({data})=>setMembers(data||[]));})
       .on('postgres_changes',{event:'*',schema:'public',table:'live_goals',filter:'group_id=eq.'+groupId},
           ()=>{carica.current&&carica.current();})
-      .on('postgres_changes',{event:'*',schema:'public',table:'live_matches',filter:'group_id=eq.'+groupId},
-          ()=>{carica.current&&carica.current();})
       .subscribe(st=>setLive(st==="SUBSCRIBED"));
     /* Rete di sicurezza: se il tempo reale non è attivo sul progetto, o cade,
        si continua comunque a vedere le novità — solo un po' più tardi. */
@@ -2788,44 +2750,33 @@ function CialtronApp(){
     setBoard(b=>Object.assign({},b,{callups:data||{}}));
   },[sb,groupId,say]);
 
-  /* ─── partita dal vivo: i gol che arrivano dall'orologio ───
-     Sta in tabelle sue e non nel documento del gruppo: ci scrive una funzione
-     che l'orologio chiama con la sola chiave pubblica, e una riga per gol
-     invece di una lista da riscrivere evita che due tocchi vicini si
-     cancellino a vicenda. */
-  const caricaDiretta=useCallback(async()=>{
+  /* ─── i gol che arrivano dall'orologio ───
+     Nessuna schermata dedicata: mentre si gioca il telefono è in borsa, i gol
+     arrivano da soli e l'app li mostra come partita in corso. Una riga per gol
+     in una tabella a parte, così due tocchi vicini non si sovrascrivono, e si
+     guardano solo quelli delle ultime ore: la partita è adesso. */
+  const caricaGolVivo=useCallback(async()=>{
     if(!sb||!groupId)return;
-    const{data:m}=await sb.from('live_matches').select('*')
-      .eq('group_id',groupId).is('closed_at',null).gt('expires_at',nowIso())
-      .order('created_at',{ascending:false}).limit(1);
-    const sess=(m&&m[0])||null;
-    if(!sess){setDiretta(null);return;}
-    const{data:g}=await sb.from('live_goals').select('*').eq('token',sess.token).order('id');
-    setDiretta({token:sess.token,white:sess.white||[],black:sess.black||[],goals:g||[]});
+    const da=new Date(Date.now()-12*3600e3).toISOString();
+    const{data}=await sb.from('live_goals').select('*').eq('group_id',groupId).gt('created_at',da).order('id');
+    setGolVivo(data||[]);
   },[sb,groupId]);
 
-  useEffect(()=>{carica.current=caricaDiretta;},[caricaDiretta]);
+  useEffect(()=>{carica.current=caricaGolVivo;},[caricaGolVivo]);
+  useEffect(()=>{golVivoRef.current=golVivo;},[golVivo]);
 
-  const apriDiretta=useCallback(async(w,b)=>{
-    const{data,error}=await sb.rpc('live_open',{p_group:groupId,p_white:w||[],p_black:b||[]});
-    if(error){say(errText(error));return null;}
-    await caricaDiretta();
-    say("Partita dal vivo aperta");
-    return data;
-  },[sb,groupId,say,caricaDiretta]);
-
-  const chiudiDiretta=useCallback(async()=>{
-    if(!diretta)return;
-    const{error}=await sb.rpc('live_close',{p_token:diretta.token});
-    if(error){say(errText(error));return;}
-    setDiretta(null);
-  },[sb,diretta,say]);
-
-  const togliGolDiretta=useCallback(async id=>{
+  const togliGolVivo=useCallback(async id=>{
     const{error}=await sb.from('live_goals').delete().eq('id',id);
     if(error){say(errText(error));return;}
-    setDiretta(d=>d?Object.assign({},d,{goals:d.goals.filter(g=>g.id!==id)}):d);
+    setGolVivo(l=>l.filter(g=>g.id!==id));
   },[sb,say]);
+
+  const azzeraGolVivo=useCallback(async()=>{
+    const ids=golVivoRef.current.map(g=>g.id);
+    if(!ids.length)return;
+    setGolVivo([]);
+    for(const id of ids){try{await sb.from('live_goals').delete().eq('id',id);}catch(e){}}
+  },[sb]);
 
   /* ─── foto: tabella a parte, scaricate solo quando cambia il rev ─── */
   const syncPhotos=useCallback(async()=>{
@@ -2980,7 +2931,6 @@ function CialtronApp(){
   const chiedeCiSei=!!myPlayerId&&!rispostaMia&&players.length>0&&avvisoAperto(board.settings);
 
   const usaSquadre=useCallback((w,b)=>{setPrefill({white:w,black:b});setTab("match");say("Squadre portate nella registrazione");},[say]);
-  const apriDirettaDaSquadre=useCallback(async(w,b)=>{const t=await apriDiretta(w,b);if(t)setTab("match");},[apriDiretta]);
   const prefillUsato=useCallback(()=>setPrefill(null),[]);
 
   if(!cfg)return <ConfigScreen pendingInvite={invite} onCfg={(c,code)=>{setCfg(c);setSb(makeClient(c));if(code)setInvite(code);}}/>;
@@ -3080,15 +3030,14 @@ function CialtronApp(){
         {tab==="callup"   &&<CallupSection players={playersView} board={board} matchDate={matchDate} members={members} myPlayerId={myPlayerId} say={say}
                               setCallup={(pid,v)=>setCallup(pid,v,matchIso)} setSettings={setSettings}/>}
         {tab==="match"    &&<MatchSection players={playersView} matches={matches} isAdmin={isAdmin} saveMatches={saveMatches}
-                              diretta={diretta} apriDiretta={apriDiretta} chiudiDiretta={chiudiDiretta}
-                              togliGolDiretta={togliGolDiretta} cfg={cfg} say={say}
+                              golVivo={golVivo} togliGolVivo={togliGolVivo} azzeraGolVivo={azzeraGolVivo}
+                              squadreFatte={teamSel&&teamSel.phase==="done"?{white:teamSel.finalWhite||[],black:teamSel.finalBlack||[]}:null}
                               prefill={prefill} onPrefillUsed={prefillUsato}/>}
         {tab==="teams"    &&<TeamsSection standings={standings} teamSel={teamSel} setSel={setSel} myPlayerId={myPlayerId} isAdmin={isAdmin}
                               capId={capId} pickId={pickId} capManual={capManual} pickManual={pickManual} setSettings={setSettings}
                               availableIds={availableIds} eligible={eligible} playAll={!!board.settings.playAll}
                               decaduti={ruoliDecaduti}
                               onUseTeams={isAdmin?usaSquadre:null}
-                              onDiretta={apriDirettaDaSquadre}
                               onAggiungi={pid=>setCallup(pid,"si",matchIso)}/>}
         {tab==="players"  &&<PlayersSection players={playersView} matches={matches} isAdmin={isAdmin} myPlayerId={myPlayerId}
                               updatePlayers={updatePlayers} setPhoto={setPhoto} removePlayer={removePlayer}/>}
