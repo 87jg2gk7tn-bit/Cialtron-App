@@ -56,7 +56,7 @@ const C={accent:"#B8FF00",bg:"#090909",card:"#111",card2:"#1A1A1A",card3:"#222",
 /* Versione pubblicata: confrontata con version.json per avvisare che c'è
    un aggiornamento. Sul telefono la pagina resta in cache, senza questo
    controllo le modifiche non arriverebbero finché non si svuota la cache. */
-const APP_VERSION="2026-09-17.5";
+const APP_VERSION="2026-09-17.6";
 
 function useUpdateCheck(){
   const [next,setNext]=useState(null);
@@ -1937,7 +1937,7 @@ function avvisoAperto(settings,adesso){
   return (adesso||new Date())>=apertura;
 }
 
-function CallupSection({players,board,matchDate,setCallup,setSettings,myPlayerId,members,say}){
+function CallupSection({players,board,matchDate,setCallup,setSettings,myPlayerId,members,say,capId,pickId,ruoliDaiSi}){
   const [conf,setConf]=useState(false);
   const iso=isoDate(matchDate);
   const risposte=(board&&board.callups&&board.callups[iso])||{};
@@ -2049,6 +2049,34 @@ function CallupSection({players,board,matchDate,setCallup,setSettings,myPlayerId
         ))}
       </div>
 
+      {/* I ruoli si decidono su chi c'è: qui si vede maturare, mano a mano che
+          arrivano le risposte, chi farà il capitano e chi il formatore. */}
+      {players.length>0&&capId&&pickId&&(
+        <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"12px 14px",marginBottom:16}}>
+          <div style={{fontSize:10,color:C.muted,letterSpacing:1,marginBottom:8}}>
+            {ruoliDaiSi?"CON I SÌ DI ADESSO":"QUANDO RISPONDETE"}
+          </div>
+          <div style={{display:"flex",gap:10}}>
+            {[["🏆 CAPITANO",capId,C.accent],["🛡️ FORMATORE",pickId,C.red]].map(([lab,id,col])=>{
+              const p=players.find(x=>x.id===id);
+              return(
+                <div key={lab} style={{flex:1,display:"flex",alignItems:"center",gap:8,minWidth:0}}>
+                  {p&&<Avatar player={p} size={26}/>}
+                  <div style={{minWidth:0}}>
+                    <div style={{fontSize:9,color:C.muted,letterSpacing:.6}}>{lab}</div>
+                    <div style={{fontSize:13,fontWeight:700,color:col,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{(p&&p.name)||"—"}</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div style={{fontSize:11,color:C.muted,marginTop:8,lineHeight:1.5}}>
+            {ruoliDaiSi
+              ?"Primo e ultimo in classifica fra chi ha detto sì. Cambiano se cambiano le risposte."
+              :"Servono almeno due sì: finché non arrivano valgono il primo e l'ultimo di tutta la rosa."}
+          </div>
+        </div>
+      )}
       {players.length===0&&<Empty emoji="👥" text="Non c'è ancora nessuno in rosa."/>}
 
       {si.length>0&&<><div style={{fontSize:10,color:C.green,fontWeight:800,letterSpacing:1,margin:"4px 2px 8px"}}>CI SONO ({si.length})</div>{si.map(p=><Riga key={p.id} p={p}/>)}</>}
@@ -2260,6 +2288,12 @@ function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capI
             </div>
           )}
 
+          {disponibili.length<2&&!playAll&&(
+            <div style={{fontSize:11,color:C.muted,marginBottom:10,lineHeight:1.5,textAlign:"center"}}>
+              Ancora meno di due sì: per ora capitano e formatore sono il primo e l'ultimo di tutta la rosa.
+              Appena rispondete, i ruoli passano a chi c'è.
+            </div>
+          )}
           <Btn onClick={()=>setScegli(v=>!v)} variant="ghost" full small>
             {scegli?"Chiudi":(capManual||pickManual||(decaduti||[]).length>0)?"Capitano e formatore scelti a mano · cambia":"Scegli capitano e formatore a mano"}
           </Btn>
@@ -3359,6 +3393,7 @@ function CialtronApp(){
                               votes={board.votes||{}} setVote={setVote} setMatchMvps={setMatchMvps}
                               myPlayerId={myPlayerId} players={playersView}/>}
         {tab==="callup"   &&<CallupSection players={playersView} board={board} matchDate={matchDate} members={members} myPlayerId={myPlayerId} say={say}
+                              capId={capId} pickId={pickId} ruoliDaiSi={!board.settings.playAll&&availableIds.length>=2}
                               setCallup={(pid,v)=>setCallup(pid,v,matchIso)} setSettings={setSettings}/>}
         {tab==="match"    &&<MatchSection players={playersView} matches={matches} isAdmin={isAdmin} saveMatches={saveMatches}
                               golVivo={golVivo} togliGolVivo={togliGolVivo} azzeraGolVivo={azzeraGolVivo}
