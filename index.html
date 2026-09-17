@@ -56,7 +56,7 @@ const C={accent:"#B8FF00",bg:"#090909",card:"#111",card2:"#1A1A1A",card3:"#222",
 /* Versione pubblicata: confrontata con version.json per avvisare che c'è
    un aggiornamento. Sul telefono la pagina resta in cache, senza questo
    controllo le modifiche non arriverebbero finché non si svuota la cache. */
-const APP_VERSION="2026-09-17.4";
+const APP_VERSION="2026-09-17.5";
 
 function useUpdateCheck(){
   const [next,setNext]=useState(null);
@@ -1245,6 +1245,12 @@ function MvpVote({match,players,votes,myPlayerId,isAdmin,onVote,onAssign,say}){
               {scelti.length>1?"Assegna a tutti e due":"Assegna l'MVP"}
             </Btn>
           </div>
+          {eletti.length>0&&(
+            <Btn onClick={async()=>{setBusy(true);await onAssign(match.id,[]);setBusy(false);setAMano(false);setScelti([]);}}
+                 disabled={busy} variant="danger" full small style={{marginTop:8}}>
+              Togli l'MVP a questa partita
+            </Btn>
+          )}
         </>
       )}
 
@@ -1279,11 +1285,6 @@ function MvpVote({match,players,votes,myPlayerId,isAdmin,onVote,onAssign,say}){
               Chiudi le votazioni e vai al ballottaggio →
             </Btn>
           )}
-          <button onClick={()=>{setScelti(eletti);setAMano(true);}}
-            style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:11,fontFamily:"'DM Sans',sans-serif",
-                    padding:"10px 0 0",textDecoration:"underline",display:"block",margin:"0 auto"}}>
-            L'avete deciso a voce? Scrivilo senza votare
-          </button>
         </>
       )}
 
@@ -1355,6 +1356,14 @@ function MvpVote({match,players,votes,myPlayerId,isAdmin,onVote,onAssign,say}){
             </>
           )}
         </>
+      )}
+
+      {!aMano&&(
+        <button onClick={()=>{setScelti(eletti);setAMano(true);}}
+          style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:11,fontFamily:"'DM Sans',sans-serif",
+                  padding:"12px 0 0",textDecoration:"underline",display:"block",margin:"0 auto"}}>
+          {eletti.length?"Cambia o togli l'MVP a mano":"L'avete deciso a voce? Scrivilo senza votare"}
+        </button>
       )}
 
       {(fase!=="r1"||v.closed1)&&isAdmin&&(
