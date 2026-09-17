@@ -56,7 +56,7 @@ const C={accent:"#B8FF00",bg:"#090909",card:"#111",card2:"#1A1A1A",card3:"#222",
 /* Versione pubblicata: confrontata con version.json per avvisare che c'è
    un aggiornamento. Sul telefono la pagina resta in cache, senza questo
    controllo le modifiche non arriverebbero finché non si svuota la cache. */
-const APP_VERSION="2026-09-17.3";
+const APP_VERSION="2026-09-17.4";
 
 function useUpdateCheck(){
   const [next,setNext]=useState(null);
@@ -1197,7 +1197,7 @@ function MvpVote({match,players,votes,myPlayerId,isAdmin,onVote,onAssign,say}){
   );
 
   return(
-    <div style={{background:C.card,border:`1px solid ${fase==="fine"?C.accent+"45":C.border}`,borderRadius:14,padding:16,marginTop:18}}>
+    <div style={{background:C.card,border:`1px solid ${C.accent}45`,borderRadius:14,padding:16,marginBottom:18}}>
       {soloAVoce&&!aMano&&(
         <>
           <Titolo sub={`Partita del ${new Date(match.date).toLocaleDateString("it-IT",{day:"2-digit",month:"long"})} · deciso a voce, senza votazione`}>🏅 MVP DELLA PARTITA</Titolo>
@@ -1250,7 +1250,7 @@ function MvpVote({match,players,votes,myPlayerId,isAdmin,onVote,onAssign,say}){
 
       {fase==="r1"&&!soloAVoce&&!aMano&&(
         <>
-          <Titolo sub={`Partita del ${new Date(match.date).toLocaleDateString("it-IT",{day:"2-digit",month:"long"})} · ⬜ ${match.scoreWhite} – ${match.scoreBlack} ⬛`}>⭐ VOTA L'MVP</Titolo>
+          <Titolo sub={`Partita del ${new Date(match.date).toLocaleDateString("it-IT",{day:"2-digit",month:"long"})} · ⬜ ${match.scoreWhite} – ${match.scoreBlack} ⬛`}>⭐ VOTA L'MVP DELLA GIORNATA</Titolo>
           {!ioGioco?(
             <div style={{fontSize:12,color:C.muted,lineHeight:1.6}}>
               Vota solo chi ha giocato questa partita. {myPlayerId?"Tu non c'eri.":"Prima devi dire chi sei nella rosa."}
@@ -1428,6 +1428,8 @@ function StandingsSection({standings,matches,gruppo,isAdmin,updatePlayers,capId,
                         color:vista===v.k?C.accent:C.muted,transition:"all .15s"}}>{v.lab}</button>
             ))}
           </div>
+          {vista==="mvp"&&ultima&&<MvpVote match={ultima} players={players} votes={votes} myPlayerId={myPlayerId}
+                            isAdmin={isAdmin} onVote={setVote} onAssign={setMatchMvps} say={say}/>}
           {tuttiZero&&<div style={{fontSize:12,color:C.muted,textAlign:"center",marginBottom:14}}>{V.vuoto}</div>}
           {!narrow&&(
             <div style={{display:"grid",gridTemplateColumns:cols,gap:4,padding:"0 10px 8px"}}>
@@ -1511,9 +1513,6 @@ function StandingsSection({standings,matches,gruppo,isAdmin,updatePlayers,capId,
             );
           })}
           {manual&&<div style={{fontSize:11,color:C.muted,textAlign:"center",marginTop:12}}>✎ = valore con una correzione manuale sopra il calcolo delle partite</div>}
-          {ultima&&<MvpVote match={ultima} players={players} votes={votes} myPlayerId={myPlayerId}
-                            isAdmin={isAdmin} onVote={setVote} onAssign={setMatchMvps} say={say}/>}
-
           <Btn onClick={esporta} disabled={pdf} variant="ghost" full
                style={{marginTop:16,padding:"13px 0",borderRadius:10,fontSize:14,color:C.accent,border:`1px solid ${C.accent}40`}}>
             {pdf?"Preparo il foglio…":"⬇︎ Esporta la classifica in PDF"}
