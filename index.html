@@ -56,7 +56,7 @@ const C={accent:"#B8FF00",bg:"#090909",card:"#111",card2:"#1A1A1A",card3:"#222",
 /* Versione pubblicata: confrontata con version.json per avvisare che c'è
    un aggiornamento. Sul telefono la pagina resta in cache, senza questo
    controllo le modifiche non arriverebbero finché non si svuota la cache. */
-const APP_VERSION="2026-09-17.2";
+const APP_VERSION="2026-09-17.3";
 
 function useUpdateCheck(){
   const [next,setNext]=useState(null);
@@ -1121,6 +1121,7 @@ async function esportaClassifica(standings,matches,gruppo){
 function MvpVote({match,players,votes,myPlayerId,isAdmin,onVote,onAssign,say}){
   const [w,setW]=useState(null), [b,setB]=useState(null), [pick,setPick]=useState(null);
   const [busy,setBusy]=useState(false), [apri,setApri]=useState(false);
+  const [aMano,setAMano]=useState(false), [scelti,setScelti]=useState([]);
 
   const nome=id=>{const p=(players||[]).find(x=>x.id===id);return (p&&p.name)||null;};
   const bianchi=(match.white||[]).filter(id=>!isExt(id));
@@ -1151,8 +1152,13 @@ function MvpVote({match,players,votes,myPlayerId,isAdmin,onVote,onAssign,say}){
   const votantiR2=giocanti.filter(id=>finalisti.indexOf(id)<0);
   const ioFinalista=finalisti.indexOf(myPlayerId)>=0;
   const hoVotato1=!!r1[myPlayerId], hoVotato2=!!r2[myPlayerId];
-  const assegnato=(match.mvps&&match.mvps.length?match.mvps:(match.mvp?[match.mvp]:[])).slice().sort().join(",");
+  const eletti=match.mvps&&match.mvps.length?match.mvps:(match.mvp?[match.mvp]:[]);
+  const assegnato=eletti.slice().sort().join(",");
   const daAssegnare=vincitori.slice().sort().join(",");
+  /* Capita di decidere l'MVP a voce negli spogliatoi, senza passare dalla
+     votazione: se la partita ha già il suo MVP e nessuno ha votato, l'app
+     mostra quello invece di chiedere di votare. */
+  const soloAVoce=eletti.length>0&&!v.closed2&&Object.keys(r1).length===0;
 
   const manda=async(round,a,bb)=>{
     setBusy(true);
@@ -1192,7 +1198,57 @@ function MvpVote({match,players,votes,myPlayerId,isAdmin,onVote,onAssign,say}){
 
   return(
     <div style={{background:C.card,border:`1px solid ${fase==="fine"?C.accent+"45":C.border}`,borderRadius:14,padding:16,marginTop:18}}>
-      {fase==="r1"&&(
+      {soloAVoce&&!aMano&&(
+        <>
+          <Titolo sub={`Partita del ${new Date(match.date).toLocaleDateString("it-IT",{day:"2-digit",month:"long"})} · deciso a voce, senza votazione`}>🏅 MVP DELLA PARTITA</Titolo>
+          <div style={{display:"flex",gap:10,justifyContent:"center",flexWrap:"wrap",marginBottom:10}}>
+            {eletti.map(id=>{
+              const pl=(players||[]).find(x=>x.id===id)||{id,name:"?"};
+              return(
+                <div key={id} style={{textAlign:"center",background:C.accent+"10",border:`1px solid ${C.accent}35`,borderRadius:12,padding:"12px 16px",minWidth:110}}>
+                  <Avatar player={pl} size={52}/>
+                  <div style={{fontWeight:800,color:C.accent,marginTop:8,fontSize:14}}>{pl.name}</div>
+                </div>
+              );
+            })}
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            <Btn onClick={()=>{setScelti(eletti);setAMano(true);}} variant="ghost" style={{flex:1}} small>Cambia</Btn>
+            <Btn onClick={async()=>{setBusy(true);await onAssign(match.id,[]);setBusy(false);}} disabled={busy} variant="ghost" style={{flex:1}} small>Togli e vota</Btn>
+          </div>
+        </>
+      )}
+
+      {aMano&&(
+        <>
+          <Titolo sub="Scegli chi è stato, senza passare dalla votazione. Se siete finiti pari, prendine due.">🏅 MVP DECISO A VOCE</Titolo>
+          {giocanti.map(id=>{
+            const pl=(players||[]).find(x=>x.id===id)||{id,name:"?"};
+            const sel=scelti.indexOf(id)>=0;
+            return(
+              <button key={id} onClick={()=>setScelti(l=>sel?l.filter(x=>x!==id):(l.length>=2?[l[1],id]:l.concat(id)))} disabled={busy}
+                style={{width:"100%",display:"flex",alignItems:"center",gap:9,marginBottom:6,padding:"8px 10px",borderRadius:10,cursor:"pointer",
+                        border:`2px solid ${sel?C.accent:C.border}`,background:sel?C.accent+"15":C.card2,fontFamily:"'DM Sans',sans-serif"}}>
+                <Avatar player={pl} size={28}/>
+                <span style={{flex:1,textAlign:"left",fontSize:13,fontWeight:sel?800:600,color:sel?C.accent:C.text}}>
+                  {pl.name}{id===myPlayerId?" (tu)":""}
+                </span>
+                <span style={{fontSize:11,color:C.muted}}>{(match.white||[]).indexOf(id)>=0?"⬜":"⬛"}</span>
+                {sel&&<span style={{fontSize:13,color:C.accent}}>✓</span>}
+              </button>
+            );
+          })}
+          <div style={{display:"flex",gap:8,marginTop:10}}>
+            <Btn onClick={()=>{setAMano(false);setScelti([]);}} variant="ghost" style={{flex:1}}>Annulla</Btn>
+            <Btn onClick={async()=>{setBusy(true);await onAssign(match.id,scelti);setBusy(false);setAMano(false);}}
+                 disabled={busy||!scelti.length} style={{flex:2}}>
+              {scelti.length>1?"Assegna a tutti e due":"Assegna l'MVP"}
+            </Btn>
+          </div>
+        </>
+      )}
+
+      {fase==="r1"&&!soloAVoce&&!aMano&&(
         <>
           <Titolo sub={`Partita del ${new Date(match.date).toLocaleDateString("it-IT",{day:"2-digit",month:"long"})} · ⬜ ${match.scoreWhite} – ${match.scoreBlack} ⬛`}>⭐ VOTA L'MVP</Titolo>
           {!ioGioco?(
@@ -1223,6 +1279,11 @@ function MvpVote({match,players,votes,myPlayerId,isAdmin,onVote,onAssign,say}){
               Chiudi le votazioni e vai al ballottaggio →
             </Btn>
           )}
+          <button onClick={()=>{setScelti(eletti);setAMano(true);}}
+            style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:11,fontFamily:"'DM Sans',sans-serif",
+                    padding:"10px 0 0",textDecoration:"underline",display:"block",margin:"0 auto"}}>
+            L'avete deciso a voce? Scrivilo senza votare
+          </button>
         </>
       )}
 
@@ -3001,7 +3062,7 @@ function CialtronApp(){
   const setMatchMvps=useCallback(async(matchId,ids)=>{
     const cur=(groupRef.current&&groupRef.current.data&&groupRef.current.data.matches)||[];
     await writeData({matches:cur.map(m=>m.id===matchId?Object.assign({},m,{mvps:ids,mvp:ids[0]||null}):m)});
-    say(ids.length>1?"MVP condiviso assegnato":"MVP assegnato");
+    say(!ids.length?"MVP tolto":(ids.length>1?"MVP condiviso assegnato":"MVP assegnato"));
   },[writeData,say]);
 
   const setCallup=useCallback(async(playerId,value,iso)=>{
