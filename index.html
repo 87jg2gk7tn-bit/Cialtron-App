@@ -56,7 +56,7 @@ const C={accent:"#B8FF00",bg:"#090909",card:"#111",card2:"#1A1A1A",card3:"#222",
 /* Versione pubblicata: confrontata con version.json per avvisare che c'è
    un aggiornamento. Sul telefono la pagina resta in cache, senza questo
    controllo le modifiche non arriverebbero finché non si svuota la cache. */
-const APP_VERSION="2026-09-17.1";
+const APP_VERSION="2026-09-17.2";
 
 function useUpdateCheck(){
   const [next,setNext]=useState(null);
@@ -207,7 +207,7 @@ function computeStats(player, matches){
    gol, MVP a premi. A parità si scende di criterio e in fondo c'è il nome, se
    no l'ordine balla da solo a ogni ricalcolo. */
 const VISTE=[{k:"generale", lab:"GENERALE", campo:"avg",   etichetta:"media",
-              sub:"3 punti per vittoria · media = punti ÷ presenze", vuoto:null},
+              sub:"3 punti per vittoria · media = punti ÷ presenze · a parità contano i gol", vuoto:null},
              {k:"marcatori",lab:"MARCATORI",campo:"goals", etichetta:"gol",
               sub:"Chi ha segnato di più", vuoto:"Nessun gol registrato per ora."},
              {k:"mvp",      lab:"MVP",      campo:"mvps",  etichetta:"mvp",
@@ -218,7 +218,8 @@ function ordinaPer(standings,vista){
   const nome=(a,b)=>String(a.name||"").localeCompare(String(b.name||""));
   if(vista==="marcatori")l.sort((a,b)=>b.stats.goals-a.stats.goals||b.stats.avg-a.stats.avg||nome(a,b));
   else if(vista==="mvp") l.sort((a,b)=>b.stats.mvps -a.stats.mvps ||b.stats.avg-a.stats.avg||nome(a,b));
-  else                   l.sort((a,b)=>b.stats.avg  -a.stats.avg  ||b.stats.points-a.stats.points||nome(a,b));
+  /* a parità di media e di punti passa avanti chi ha fatto più gol */
+  else                   l.sort((a,b)=>b.stats.avg  -a.stats.avg  ||b.stats.points-a.stats.points||b.stats.goals-a.stats.goals||nome(a,b));
   return l;
 }
 
@@ -1284,14 +1285,12 @@ function MvpVote({match,players,votes,myPlayerId,isAdmin,onVote,onAssign,say}){
               {vincitori.length>1&&<div style={{fontSize:12,color:C.muted,textAlign:"center",marginBottom:10,lineHeight:1.5}}>
                 Ballottaggio finito pari: l'MVP è di tutti e {vincitori.length===2?"due":vincitori.length}, e conta per entrambi in classifica.
               </div>}
-              {isAdmin&&(assegnato===daAssegnare
+              {(assegnato===daAssegnare
                 ?<div style={{fontSize:11,color:C.muted,textAlign:"center"}}>✓ Già scritto nella partita e in classifica</div>
                 :<Btn onClick={async()=>{setBusy(true);await onAssign(match.id,vincitori);setBusy(false);}} disabled={busy} full style={{padding:"12px 0",borderRadius:10}}>
                    Assegna l'MVP alla partita
                  </Btn>)}
-              {!isAdmin&&assegnato!==daAssegnare&&<div style={{fontSize:11,color:C.muted,textAlign:"center",lineHeight:1.5}}>
-                Un admin lo scrive nella partita e va in classifica.
-              </div>}
+
             </>
           )}
         </>
@@ -1618,7 +1617,7 @@ function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed
               </div>
             </div>
           )}
-          {isAdmin&&<Btn onClick={()=>setPhase("teams")} disabled={(players||[]).length<2} full style={{padding:"13px 0",fontSize:15,borderRadius:10,marginBottom:18}}>＋ Nuova partita</Btn>}
+          <Btn onClick={()=>setPhase("teams")} disabled={(players||[]).length<2} full style={{padding:"13px 0",fontSize:15,borderRadius:10,marginBottom:18}}>＋ Nuova partita</Btn>
           {!matches||matches.length===0?<Empty emoji="⚽" text="Nessuna partita ancora."/>:
             [...(matches||[])].reverse().map(m=>(
               <div key={m.id} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:14,marginBottom:8}}>
@@ -2423,7 +2422,7 @@ function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capI
                 ))}
               </div>
               <Btn onClick={()=>setModifica(true)} variant="ghost" full small style={{marginBottom:10}}>✏️ Sposta, togli o aggiungi giocatori</Btn>
-              {isAdmin&&onUseTeams&&(
+              {onUseTeams&&(
                 <>
                   <Btn onClick={()=>onUseTeams(fW,fB)} disabled={!fW.length||!fB.length} full style={{marginBottom:fW.length&&fB.length?8:4}}>Registra la partita con queste squadre →</Btn>
                   {(!fW.length||!fB.length)&&<div style={{fontSize:11,color:C.muted,textAlign:"center",marginBottom:8}}>Una delle due squadre è vuota.</div>}
@@ -2489,7 +2488,12 @@ function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capI
 function PlayersSection({players,matches,isAdmin,myPlayerId,updatePlayers,setPhoto,removePlayer}){
   /* ognuno cura la propria scheda: foto e nome del giocatore che ha dichiarato
      di essere; il resto della rosa resta agli admin */
-  const canEdit=p=>isAdmin||p.id===myPlayerId;
+  /* Nome e numeri li sistema chiunque nel gruppo: capita di scrivere male un
+     nome e di doverlo correggere mentre si fanno le squadre. Cambiare il nome
+     non tocca l'identità del giocatore — l'id resta lo stesso, quindi
+     partite, gol e classifica restano attaccati a lui. Cancellare, quello sì,
+     resta agli admin. */
+  const canEdit=p=>true;
   const [showAdd,setShowAdd]=useState(false), [newName,setNewName]=useState(""), [newPhoto,setNewPhoto]=useState(null);
   const [editId,setEditId]=useState(null), [editName,setEditName]=useState(""), [editVals,setEditVals]=useState({});
   const [busy,setBusy]=useState(false), [delP,setDelP]=useState(null), [delSicuro,setDelSicuro]=useState(false);
@@ -2937,16 +2941,29 @@ function CialtronApp(){
   const playersView=useMemo(()=>players.map(p=>({...p,photo:photoCache[p.id]||null})),[players,photoCache]);
   const standings=useMemo(()=>
     playersView.map(p=>({...p,stats:computeStats(p,matches)}))
-      .sort((a,b)=>b.stats.avg-a.stats.avg||b.stats.points-a.stats.points),
+      .sort((a,b)=>b.stats.avg-a.stats.avg||b.stats.points-a.stats.points||b.stats.goals-a.stats.goals),
     [playersView,matches]);
 
   /* ─── scritture ─── */
+  /* Rosa e partite le scrive chiunque nel gruppo, non solo gli admin: chi
+     registra la partita è chi l'ha giocata. Si passa da una funzione perché
+     la regola di sicurezza sulla tabella è per soli admin, e — questa è la
+     parte cattiva — a un non-admin non dava errore: non scriveva e basta, e
+     l'app credeva di aver salvato. Per questo il ripiego, oltre a guardare
+     l'errore, conta le righe scritte. */
   const writeData=useCallback(async patch=>{
     const cur=(groupRef.current&&groupRef.current.data)||{};
     const next=Object.assign({players:[],matches:[]},cur,patch);
     setGroup(g=>Object.assign({},g,{data:next}));
-    const{error}=await sb.from('groups').update({data:next,updated_at:nowIso(),updated_by:uid}).eq('id',groupId);
-    if(error){say(errText(error));loadGroup();return false;}
+    const{error:eRpc}=await sb.rpc('save_data',{p_group:groupId,p_data:next});
+    if(!eRpc)return true;
+    if(!/save_data|schema cache|does not exist/i.test(errText(eRpc))){say(errText(eRpc));loadGroup();return false;}
+    const{data:righe,error}=await sb.from('groups')
+      .update({data:next,updated_at:nowIso(),updated_by:uid}).eq('id',groupId).select('id');
+    if(error||!righe||!righe.length){
+      say(error?errText(error):"Non salvato: serve l'aggiornamento del database");
+      loadGroup();return false;
+    }
     return true;
   },[sb,groupId,uid,say,loadGroup]);
 
@@ -3282,7 +3299,7 @@ function CialtronApp(){
                               capId={capId} pickId={pickId} capManual={capManual} pickManual={pickManual} setSettings={setSettings}
                               availableIds={availableIds} eligible={eligible} playAll={!!board.settings.playAll}
                               decaduti={ruoliDecaduti}
-                              onUseTeams={isAdmin?usaSquadre:null}
+                              onUseTeams={usaSquadre}
                               onAggiungi={pid=>setCallup(pid,"si",matchIso)}/>}
         {tab==="players"  &&<PlayersSection players={playersView} matches={matches} isAdmin={isAdmin} myPlayerId={myPlayerId}
                               updatePlayers={updatePlayers} setPhoto={setPhoto} removePlayer={removePlayer}/>}

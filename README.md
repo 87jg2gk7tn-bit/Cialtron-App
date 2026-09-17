@@ -50,6 +50,12 @@ board          group_id, settings, callups jsonb          ← giorno di gioco, c
 photos         group_id, player_id, photo, rev            ← fuori dal documento: sono base64 pesanti
 ```
 
+Rosa e partite stanno in `groups.data`, che per la regola di sicurezza scrivono solo gli
+admin. Ci scrivono tutti passando dalla funzione `save_data`, che controlla solo di essere
+del gruppo: la partita la registra chi l'ha giocata. Serve anche perché un aggiornamento
+rifiutato dalla RLS **non dà errore** — non scrive nessuna riga e basta — quindi l'app
+credeva di aver salvato; il ripiego per i vecchi database ora conta le righe scritte.
+
 Le statistiche **non** sono memorizzate: si ricalcolano dalle partite e ci si somma `base`,
 la parte manuale (storico importato o correzione con ✏️). Le partite registrate dopo
 continuano quindi ad aggiornare i totali.
@@ -72,17 +78,20 @@ cancellano a vicenda. Le date più vecchie di 60 giorni vengono potate da sole.
 
 | | admin | giocatore |
 |---|---|---|
-| Classifica, partite, rosa, import | ✅ | 👀 sola lettura |
+| Partite: registrare e correggere | ✅ | ✅ |
+| Rosa: nomi e numeri | ✅ | ✅ |
+| Rosa: aggiungere e cancellare giocatori | ✅ | ❌ |
 | Selezione squadre | ✅ | ✅ (al proprio turno: picker o capitano) |
 | Convocazioni, giorno di gioco, scelta dei capitani | ✅ | ✅ |
-| La propria foto e il proprio nome | ✅ | ✅ |
+| La propria foto | ✅ | ✅ |
+| Votare l'MVP | ✅ (se ha giocato) | ✅ (se ha giocato) |
 | Invitare, promuovere altri admin | ✅ | ❌ |
 
 Chi crea il gruppo ne è il proprietario, è sempre admin e non è degradabile.
 
 ## Funzionalità
 
-* **Classifica** — tre classifiche dagli stessi numeri, con lo switcher in alto: **generale** ordinata per **media** (punti ÷ presenze: 6 punti in 2 partite fa 3.00 e sta sopra a 3 punti in 2 partite, che fa 1.50), **marcatori** per gol e **MVP** per premi. I punti sono 3 per vittoria, e il pareggio non esiste. La maglia nera in fondo vale solo nella generale. Badge CAP e PICK, correzione manuale con ✏️. Compatta sotto i 460 px, tabellare sopra
+* **Classifica** — tre classifiche dagli stessi numeri, con lo switcher in alto: **generale** ordinata per **media** (punti ÷ presenze: 6 punti in 2 partite fa 3.00 e sta sopra a 3 punti in 2 partite, che fa 1.50; **a parità di media e punti passa avanti chi ha fatto più gol**), **marcatori** per gol e **MVP** per premi. I punti sono 3 per vittoria, e il pareggio non esiste. La maglia nera in fondo vale solo nella generale. Badge CAP e PICK, correzione manuale con ✏️. Compatta sotto i 460 px, tabellare sopra
 * **Classifica in PDF** — dal tasto in fondo alla classifica esce un foglio A4 con podio, foto, tutte e tre le classifiche e i numeri della stagione. La libreria si scarica solo quando si preme il tasto (serve la rete la prima volta). Sul telefono si apre il menu di condivisione, così va dritta nel gruppo; altrove si scarica come file
 * **Rosa** — un tocco sulla foto la apre grande, e da lì "Modifica" per scattarne una nuova o prenderla dalle foto del telefono; "Togli la foto" torna all'iniziale colorata
 * **Vota l'MVP** — in fondo alla classifica, sull'ultima partita registrata. Vota solo chi ha giocato (gli esterni no: non votano e non si votano), si sceglie il migliore dei bianchi e il migliore dei neri, e il voto a sé stessi vale. I due più votati vanno al **ballottaggio**, dove votano tutti gli altri — i finalisti no. Se il ballottaggio finisce pari l'**MVP è di entrambi**, e conta per entrambi in classifica: qui la parità vale. I voti stanno nella bacheca, uno per votante, e ci scrive solo la funzione `set_vote` (nessuno vota al posto di un altro, e dieci voti nello stesso minuto non si sovrascrivono)

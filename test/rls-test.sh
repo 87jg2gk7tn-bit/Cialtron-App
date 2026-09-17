@@ -93,6 +93,17 @@ as $A "select set_callup('$GID','$VECCHIA','p9','si');" >/dev/null
 as $A "select set_callup('$GID','$D','p9','si');" >/dev/null
 ok "le convocazioni vecchie vengono potate" "$(as $A "select callups ? '$VECCHIA' from board where group_id='$GID';")" "f"
 
+echo "— ROSA E PARTITE: CI SCRIVONO TUTTI —"
+# La regola sulla tabella è per soli admin, e a un giocatore normale non dava
+# errore: semplicemente non scriveva. Adesso si passa da save_data.
+DATI='{"players":[{"id":"p1","name":"Mera"}],"matches":[{"id":"mX","white":["p1"],"black":[],"winner":"white"}]}'
+as $C "update groups set data='$DATI'::jsonb where id='$GID';" >/dev/null 2>&1
+ok "un giocatore normale non scrive direttamente" "$(as $A "select coalesce((data->'matches'->0->>'id'),'(niente)') from groups where id='$GID';")" "(niente)"
+ok "ma con save_data sì" "$(as $C "select save_data('$GID','$DATI'::jsonb);")" "t"
+ok "e la partita è davvero salvata" "$(as $A "select data->'matches'->0->>'id' from groups where id='$GID';")" "mX"
+deve_fallire "un estraneo non salva niente" $E "select save_data('$GID','$DATI'::jsonb);"
+deve_fallire "dati senza partite rifiutati" $C "select save_data('$GID','{\"players\":[]}'::jsonb);"
+
 echo "— GOL DAL POLSO —"
 # l'orologio non fa login: parla col database usando la sola chiave pubblica,
 # che qui è il ruolo "ospite". Deve poter fare una cosa sola, con il codice.

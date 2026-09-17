@@ -579,3 +579,29 @@ $$;
 
 revoke execute on function public.set_vote(uuid,text,text,text,text) from anon;
 grant  execute on function public.set_vote(uuid,text,text,text,text) to authenticated;
+
+-- ═══════════════════════════════════════════════════════════════════
+--  SALVARE ROSA E PARTITE: CI SCRIVONO TUTTI
+--  Finora groups.data lo potevano cambiare solo gli admin. Chi non lo era
+--  registrava la partita, premeva salva e non succedeva niente: la regola
+--  di sicurezza non dà errore, semplicemente non scrive nessuna riga, e
+--  l'app credeva di aver salvato. Ora si passa da qui: la funzione
+--  controlla che tu sia del gruppo e scrive solo il campo dei dati.
+-- ═══════════════════════════════════════════════════════════════════
+
+create or replace function public.save_data(p_group uuid, p_data jsonb)
+returns boolean language plpgsql security definer set search_path = public as $$
+begin
+  if not is_member(p_group) then raise exception 'non sei in questo gruppo'; end if;
+  if p_data is null or jsonb_typeof(p_data) <> 'object' then raise exception 'dati non validi'; end if;
+  if not (p_data ? 'players') or not (p_data ? 'matches') then raise exception 'dati incompleti'; end if;
+  if jsonb_typeof(p_data->'players') <> 'array' or jsonb_typeof(p_data->'matches') <> 'array' then
+    raise exception 'dati non validi';
+  end if;
+  update groups set data = p_data, updated_at = now(), updated_by = auth.uid() where id = p_group;
+  return true;
+end;
+$$;
+
+revoke execute on function public.save_data(uuid, jsonb) from anon;
+grant  execute on function public.save_data(uuid, jsonb) to authenticated;
