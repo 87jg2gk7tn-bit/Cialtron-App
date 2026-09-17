@@ -56,7 +56,7 @@ const C={accent:"#B8FF00",bg:"#090909",card:"#111",card2:"#1A1A1A",card3:"#222",
 /* Versione pubblicata: confrontata con version.json per avvisare che c'è
    un aggiornamento. Sul telefono la pagina resta in cache, senza questo
    controllo le modifiche non arriverebbero finché non si svuota la cache. */
-const APP_VERSION="2026-09-15.16";
+const APP_VERSION="2026-09-17.1";
 
 function useUpdateCheck(){
   const [next,setNext]=useState(null);
@@ -186,7 +186,11 @@ function computeStats(player, matches){
       if((m.winner==="white"&&iW)||(m.winner==="black"&&iB))aW++;
       else if(m.winner==="draw")aN++;   // vecchie registrazioni: ora il pari non si può più salvare
     }
-    if(m.mvp===player.id)aM++; aG+=m.goals?.[player.id]||0;
+    /* L'MVP può essere di due persone: se il ballottaggio finisce pari
+       valgono entrambi, e `mvps` tiene la lista. `mvp` resta per le partite
+       registrate prima che esistesse la votazione. */
+    const eletti=(m.mvps&&m.mvps.length)?m.mvps:(m.mvp?[m.mvp]:[]);
+    if(eletti.indexOf(player.id)>=0)aM++; aG+=m.goals?.[player.id]||0;
   }
   const auto={presences:aP,wins:aW,goals:aG,mvps:aM};
   const b=player.base||{}, base={}, tot={};
@@ -1103,13 +1107,222 @@ async function esportaClassifica(standings,matches,gruppo){
   return "salvata";
 }
 
-function StandingsSection({standings,matches,gruppo,isAdmin,updatePlayers,capId,pickId,say}){
+/* ═══════════════════════════════════════════════════════
+   VOTA L'MVP
+   Vota solo chi ha giocato l'ultima partita, esterni esclusi (non votano
+   e non si votano: non hanno scheda). Ognuno indica il migliore dei
+   bianchi e il migliore dei neri; i due più votati vanno al ballottaggio
+   e lì votano tutti gli altri — i finalisti no, sarebbero giudici di sé
+   stessi. Il voto a sé stessi invece vale: se uno ha fatto la partita
+   della vita lo sanno tutti, primo lui.
+   Se il ballottaggio finisce pari l'MVP è di entrambi: qui la parità vale.
+═══════════════════════════════════════════════════════ */
+function MvpVote({match,players,votes,myPlayerId,isAdmin,onVote,onAssign,say}){
+  const [w,setW]=useState(null), [b,setB]=useState(null), [pick,setPick]=useState(null);
+  const [busy,setBusy]=useState(false), [apri,setApri]=useState(false);
+
+  const nome=id=>{const p=(players||[]).find(x=>x.id===id);return (p&&p.name)||null;};
+  const bianchi=(match.white||[]).filter(id=>!isExt(id));
+  const neri=(match.black||[]).filter(id=>!isExt(id));
+  const giocanti=bianchi.concat(neri);
+  const v=(votes||{})[match.id]||{};
+  const r1=v.r1||{}, r2=v.r2||{};
+  const ioGioco=!!myPlayerId&&giocanti.indexOf(myPlayerId)>=0;
+  const fase=!v.closed1?"r1":(!v.closed2?"r2":"fine");
+
+  /* conteggi: il voto ai bianchi conta per i bianchi, quello ai neri per i neri */
+  const conta=(campo,ids)=>{
+    const c={};ids.forEach(id=>c[id]=0);
+    Object.values(r1).forEach(x=>{if(x&&c[x[campo]]!==undefined)c[x[campo]]++;});
+    return c;
+  };
+  const cW=conta("w",bianchi), cB=conta("b",neri);
+  const top=c=>{const m=Math.max(-1,...Object.values(c));return m<=0?[]:Object.keys(c).filter(id=>c[id]===m);};
+  const finalisti=top(cW).concat(top(cB));
+
+  const cFin=useMemo(()=>{
+    const c={};finalisti.forEach(id=>c[id]=0);
+    Object.values(r2).forEach(id=>{if(c[id]!==undefined)c[id]++;});
+    return c;
+  },[r2,finalisti.join(",")]);
+  const vincitori=(()=>{const m=Math.max(-1,...Object.values(cFin));return m<=0?[]:Object.keys(cFin).filter(id=>cFin[id]===m);})();
+
+  const votantiR2=giocanti.filter(id=>finalisti.indexOf(id)<0);
+  const ioFinalista=finalisti.indexOf(myPlayerId)>=0;
+  const hoVotato1=!!r1[myPlayerId], hoVotato2=!!r2[myPlayerId];
+  const assegnato=(match.mvps&&match.mvps.length?match.mvps:(match.mvp?[match.mvp]:[])).slice().sort().join(",");
+  const daAssegnare=vincitori.slice().sort().join(",");
+
+  const manda=async(round,a,bb)=>{
+    setBusy(true);
+    const ok=await onVote(match.id,round,a,bb);
+    setBusy(false);
+    if(ok&&round==="r1")say("Voto registrato");
+    if(ok&&round==="r2")say("Voto del ballottaggio registrato");
+  };
+
+  const Sceglibile=({ids,scelto,onPick,conteggio})=>(
+    <div style={{marginBottom:10}}>
+      {ids.map(id=>{
+        const p=(players||[]).find(x=>x.id===id)||{id,name:"?"};
+        const sel=scelto===id;
+        return(
+          <button key={id} onClick={()=>onPick(id)} disabled={busy}
+            style={{width:"100%",display:"flex",alignItems:"center",gap:9,marginBottom:6,padding:"8px 10px",borderRadius:10,cursor:"pointer",
+                    border:`2px solid ${sel?C.accent:C.border}`,background:sel?C.accent+"15":C.card2,fontFamily:"'DM Sans',sans-serif"}}>
+            <Avatar player={p} size={28}/>
+            <span style={{flex:1,textAlign:"left",fontSize:13,fontWeight:sel?800:600,color:sel?C.accent:C.text}}>
+              {p.name}{id===myPlayerId?" (tu)":""}
+            </span>
+            {conteggio!==undefined&&<span style={{fontSize:12,color:C.muted}}>{conteggio[id]||0}</span>}
+            {sel&&<span style={{fontSize:13,color:C.accent}}>✓</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
+
+  const Titolo=({children,sub})=>(
+    <div style={{marginBottom:12}}>
+      <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,letterSpacing:2,color:C.accent}}>{children}</div>
+      {sub&&<div style={{fontSize:11,color:C.muted,marginTop:2,lineHeight:1.5}}>{sub}</div>}
+    </div>
+  );
+
+  return(
+    <div style={{background:C.card,border:`1px solid ${fase==="fine"?C.accent+"45":C.border}`,borderRadius:14,padding:16,marginTop:18}}>
+      {fase==="r1"&&(
+        <>
+          <Titolo sub={`Partita del ${new Date(match.date).toLocaleDateString("it-IT",{day:"2-digit",month:"long"})} · ⬜ ${match.scoreWhite} – ${match.scoreBlack} ⬛`}>⭐ VOTA L'MVP</Titolo>
+          {!ioGioco?(
+            <div style={{fontSize:12,color:C.muted,lineHeight:1.6}}>
+              Vota solo chi ha giocato questa partita. {myPlayerId?"Tu non c'eri.":"Prima devi dire chi sei nella rosa."}
+            </div>
+          ):(
+            <>
+              <div style={{fontSize:12,color:C.muted,marginBottom:12,lineHeight:1.6}}>
+                Scegli il migliore dei bianchi e il migliore dei neri. Puoi votare anche te stesso.
+              </div>
+              <div style={{fontSize:10,color:C.muted,fontWeight:800,letterSpacing:1,marginBottom:8}}>⬜ MIGLIORE DEI BIANCHI</div>
+              <Sceglibile ids={bianchi} scelto={w||(r1[myPlayerId]&&r1[myPlayerId].w)} onPick={setW}/>
+              <div style={{fontSize:10,color:C.muted,fontWeight:800,letterSpacing:1,marginBottom:8}}>⬛ MIGLIORE DEI NERI</div>
+              <Sceglibile ids={neri} scelto={b||(r1[myPlayerId]&&r1[myPlayerId].b)} onPick={setB}/>
+              <Btn onClick={()=>manda("r1",w||(r1[myPlayerId]||{}).w,b||(r1[myPlayerId]||{}).b)}
+                   disabled={busy||!(w||(r1[myPlayerId]||{}).w)||!(b||(r1[myPlayerId]||{}).b)} full
+                   style={{padding:"12px 0",borderRadius:10}}>
+                {hoVotato1?"Cambia il mio voto":"Vota"}
+              </Btn>
+            </>
+          )}
+          <div style={{fontSize:11,color:C.muted,textAlign:"center",marginTop:10}}>
+            Hanno votato <strong style={{color:C.text}}>{Object.keys(r1).length}</strong> su {giocanti.length}
+          </div>
+          {ioGioco&&Object.keys(r1).length>0&&(
+            <Btn onClick={()=>manda("close1")} disabled={busy} variant="ghost" full small style={{marginTop:10}}>
+              Chiudi le votazioni e vai al ballottaggio →
+            </Btn>
+          )}
+        </>
+      )}
+
+      {fase==="r2"&&(
+        <>
+          <Titolo sub="I due più votati se la giocano. Chi è in ballottaggio non vota.">⚖️ BALLOTTAGGIO</Titolo>
+          {finalisti.length===0?(
+            <div style={{fontSize:12,color:C.muted}}>Nessun voto nel primo turno: non c'è nessuno in ballottaggio.</div>
+          ):(
+            <>
+              <div style={{fontSize:11,color:C.muted,marginBottom:10,lineHeight:1.6}}>
+                Dal primo turno: {finalisti.map(id=>nome(id)+" ("+((cW[id]||0)+(cB[id]||0))+")").join(" · ")}
+              </div>
+              {ioFinalista?(
+                <div style={{background:C.accent+"12",border:`1px solid ${C.accent}35`,borderRadius:10,padding:"10px 12px",fontSize:12,color:C.text,lineHeight:1.6,marginBottom:10}}>
+                  Sei in ballottaggio: qui non voti. Decidono gli altri.
+                </div>
+              ):!ioGioco?(
+                <div style={{fontSize:12,color:C.muted,marginBottom:10}}>Vota solo chi ha giocato questa partita.</div>
+              ):(
+                <>
+                  <Sceglibile ids={finalisti} scelto={pick||r2[myPlayerId]} onPick={setPick}/>
+                  <Btn onClick={()=>manda("r2",pick||r2[myPlayerId])} disabled={busy||!(pick||r2[myPlayerId])} full style={{padding:"12px 0",borderRadius:10}}>
+                    {hoVotato2?"Cambia il mio voto":"Vota"}
+                  </Btn>
+                </>
+              )}
+              <div style={{fontSize:11,color:C.muted,textAlign:"center",marginTop:10}}>
+                Hanno votato <strong style={{color:C.text}}>{Object.keys(r2).length}</strong> su {votantiR2.length}
+              </div>
+              {ioGioco&&Object.keys(r2).length>0&&(
+                <Btn onClick={()=>manda("close2")} disabled={busy} variant="ghost" full small style={{marginTop:10}}>
+                  Chiudi il ballottaggio e proclama l'MVP →
+                </Btn>
+              )}
+            </>
+          )}
+        </>
+      )}
+
+      {fase==="fine"&&(
+        <>
+          <Titolo sub={`Partita del ${new Date(match.date).toLocaleDateString("it-IT",{day:"2-digit",month:"long"})}`}>🏅 MVP DELLA PARTITA</Titolo>
+          {vincitori.length===0?(
+            <div style={{fontSize:12,color:C.muted}}>Nessun voto nel ballottaggio: MVP non assegnato.</div>
+          ):(
+            <>
+              <div style={{display:"flex",gap:10,justifyContent:"center",flexWrap:"wrap",marginBottom:10}}>
+                {vincitori.map(id=>{
+                  const p=(players||[]).find(x=>x.id===id)||{id,name:"?"};
+                  return(
+                    <div key={id} style={{textAlign:"center",background:C.accent+"10",border:`1px solid ${C.accent}35`,borderRadius:12,padding:"12px 16px",minWidth:110}}>
+                      <Avatar player={p} size={52}/>
+                      <div style={{fontWeight:800,color:C.accent,marginTop:8,fontSize:14}}>{p.name}</div>
+                      <div style={{fontSize:11,color:C.muted}}>{cFin[id]} {cFin[id]===1?"voto":"voti"}</div>
+                    </div>
+                  );
+                })}
+              </div>
+              {vincitori.length>1&&<div style={{fontSize:12,color:C.muted,textAlign:"center",marginBottom:10,lineHeight:1.5}}>
+                Ballottaggio finito pari: l'MVP è di tutti e {vincitori.length===2?"due":vincitori.length}, e conta per entrambi in classifica.
+              </div>}
+              {isAdmin&&(assegnato===daAssegnare
+                ?<div style={{fontSize:11,color:C.muted,textAlign:"center"}}>✓ Già scritto nella partita e in classifica</div>
+                :<Btn onClick={async()=>{setBusy(true);await onAssign(match.id,vincitori);setBusy(false);}} disabled={busy} full style={{padding:"12px 0",borderRadius:10}}>
+                   Assegna l'MVP alla partita
+                 </Btn>)}
+              {!isAdmin&&assegnato!==daAssegnare&&<div style={{fontSize:11,color:C.muted,textAlign:"center",lineHeight:1.5}}>
+                Un admin lo scrive nella partita e va in classifica.
+              </div>}
+            </>
+          )}
+        </>
+      )}
+
+      {(fase!=="r1"||v.closed1)&&isAdmin&&(
+        <>
+          <button onClick={()=>setApri(a=>!a)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:11,
+                   fontFamily:"'DM Sans',sans-serif",padding:"8px 0 0",textDecoration:"underline",display:"block",margin:"0 auto"}}>
+            {apri?"Chiudi":"Rifare la votazione da capo"}
+          </button>
+          {apri&&(
+            <Btn onClick={async()=>{setApri(false);await manda("reset");}} variant="danger" full small style={{marginTop:8}}>
+              Sì, cancella i voti e ricomincia
+            </Btn>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function StandingsSection({standings,matches,gruppo,isAdmin,updatePlayers,capId,pickId,say,votes,setVote,setMatchMvps,myPlayerId,players}){
   const [editId,setEditId]=useState(null), [ev,setEv]=useState({}), [busy,setBusy]=useState(false);
   const [pdf,setPdf]=useState(false);
   const [vista,setVista]=useState("generale");
   const V=vistaDi(vista);
   const lista=useMemo(()=>ordinaPer(standings,vista),[standings,vista]);
   const tuttiZero=vista!=="generale"&&lista.every(p=>p.stats[V.campo]===0);
+  /* si vota l'ultima partita registrata: è quella appena giocata */
+  const ultima=(matches||[]).length?(matches||[])[(matches||[]).length-1]:null;
   const narrow=useNarrow();
   const startEdit=p=>{setEditId(p.id);setEv({presences:p.stats.presences,wins:p.stats.wins,goals:p.stats.goals,mvps:p.stats.mvps});};
   const toAuto=p=>setEv({presences:p.stats.auto.presences,wins:p.stats.auto.wins,goals:p.stats.auto.goals,mvps:p.stats.auto.mvps});
@@ -1238,6 +1451,9 @@ function StandingsSection({standings,matches,gruppo,isAdmin,updatePlayers,capId,
             );
           })}
           {manual&&<div style={{fontSize:11,color:C.muted,textAlign:"center",marginTop:12}}>✎ = valore con una correzione manuale sopra il calcolo delle partite</div>}
+          {ultima&&<MvpVote match={ultima} players={players} votes={votes} myPlayerId={myPlayerId}
+                            isAdmin={isAdmin} onVote={setVote} onAssign={setMatchMvps} say={say}/>}
+
           <Btn onClick={esporta} disabled={pdf} variant="ghost" full
                style={{marginTop:16,padding:"13px 0",borderRadius:10,fontSize:14,color:C.accent,border:`1px solid ${C.accent}40`}}>
             {pdf?"Preparo il foglio…":"⬇︎ Esporta la classifica in PDF"}
@@ -2575,7 +2791,7 @@ function CialtronApp(){
   const [group,setGroup]=useState(null);
   const [members,setMembers]=useState([]);
   const [teamSel,setTeamSel]=useState(null);
-  const [board,setBoard]=useState({settings:{},callups:{}});
+  const [board,setBoard]=useState({settings:{},callups:{},votes:{}});
   const [photoCache,setPhotoCache]=useState({});
   const [tab,setTab]=useState("standings");
   const [panel,setPanel]=useState(null);
@@ -2678,10 +2894,10 @@ function CialtronApp(){
       setTeamSel((ins&&ins.state)||{phase:"idle",assign:{}});
     }
     /* la bacheca può mancare nei gruppi nati prima che esistesse */
-    if(b.data)setBoard({settings:b.data.settings||{},callups:b.data.callups||{}});
+    if(b.data)setBoard({settings:b.data.settings||{},callups:b.data.callups||{},votes:b.data.votes||{}});
     else{
       const{data:ins}=await sb.from('board').insert({group_id:groupId}).select().maybeSingle();
-      setBoard({settings:(ins&&ins.settings)||{},callups:(ins&&ins.callups)||{}});
+      setBoard({settings:(ins&&ins.settings)||{},callups:(ins&&ins.callups)||{},votes:(ins&&ins.votes)||{}});
     }
   },[sb,groupId]);
 
@@ -2696,7 +2912,7 @@ function CialtronApp(){
       .on('postgres_changes',{event:'*',schema:'public',table:'selections',filter:'group_id=eq.'+groupId},
           p=>{if(p.new&&p.new.state)setTeamSel(p.new.state);})
       .on('postgres_changes',{event:'*',schema:'public',table:'board',filter:'group_id=eq.'+groupId},
-          p=>{if(p.new)setBoard({settings:p.new.settings||{},callups:p.new.callups||{}});})
+          p=>{if(p.new)setBoard({settings:p.new.settings||{},callups:p.new.callups||{},votes:p.new.votes||{}});})
       .on('postgres_changes',{event:'*',schema:'public',table:'group_members',filter:'group_id=eq.'+groupId},
           ()=>{sb.from('group_members').select('*').eq('group_id',groupId).then(({data})=>setMembers(data||[]));})
       .on('postgres_changes',{event:'*',schema:'public',table:'live_goals',filter:'group_id=eq.'+groupId},
@@ -2755,6 +2971,22 @@ function CialtronApp(){
 
   /* La risposta passa dal database e non da un aggiornamento nostro: due
      persone che rispondono insieme non si cancellano a vicenda. */
+  /* Il voto passa da una funzione del database e non da una scrittura
+     diretta: scrive solo sotto il nome di chi vota, e dieci voti nello stesso
+     minuto non si sovrascrivono a vicenda. */
+  const setVote=useCallback(async(matchId,round,a,b)=>{
+    const{data,error}=await sb.rpc('set_vote',{p_group:groupId,p_match:matchId,p_round:round,p_a:a||null,p_b:b||null});
+    if(error){say(/set_vote/.test(errText(error))?"Serve l'aggiornamento del database (voto-mvp.sql)":errText(error));return false;}
+    setBoard(x=>Object.assign({},x,{votes:data||{}}));
+    return true;
+  },[sb,groupId,say]);
+
+  const setMatchMvps=useCallback(async(matchId,ids)=>{
+    const cur=(groupRef.current&&groupRef.current.data&&groupRef.current.data.matches)||[];
+    await writeData({matches:cur.map(m=>m.id===matchId?Object.assign({},m,{mvps:ids,mvp:ids[0]||null}):m)});
+    say(ids.length>1?"MVP condiviso assegnato":"MVP assegnato");
+  },[writeData,say]);
+
   const setCallup=useCallback(async(playerId,value,iso)=>{
     const{data,error}=await sb.rpc('set_callup',{p_group:groupId,p_date:iso,p_player:playerId,p_value:value||""});
     if(error){say(errText(error));return;}
@@ -3037,7 +3269,9 @@ function CialtronApp(){
 
       <main style={{maxWidth:700,margin:"0 auto",padding:"22px 14px 100px"}}>
         {tab==="standings"&&<StandingsSection standings={standings} matches={matches} gruppo={group.name} say={say}
-                              isAdmin={isAdmin} updatePlayers={updatePlayers} capId={capId} pickId={pickId}/>}
+                              isAdmin={isAdmin} updatePlayers={updatePlayers} capId={capId} pickId={pickId}
+                              votes={board.votes||{}} setVote={setVote} setMatchMvps={setMatchMvps}
+                              myPlayerId={myPlayerId} players={playersView}/>}
         {tab==="callup"   &&<CallupSection players={playersView} board={board} matchDate={matchDate} members={members} myPlayerId={myPlayerId} say={say}
                               setCallup={(pid,v)=>setCallup(pid,v,matchIso)} setSettings={setSettings}/>}
         {tab==="match"    &&<MatchSection players={playersView} matches={matches} isAdmin={isAdmin} saveMatches={saveMatches}
