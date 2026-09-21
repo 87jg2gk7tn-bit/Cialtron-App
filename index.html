@@ -56,7 +56,7 @@ const C={accent:"#B8FF00",bg:"#090909",card:"#111",card2:"#1A1A1A",card3:"#222",
 /* Versione pubblicata: confrontata con version.json per avvisare che c'è
    un aggiornamento. Sul telefono la pagina resta in cache, senza questo
    controllo le modifiche non arriverebbero finché non si svuota la cache. */
-const APP_VERSION="2026-09-17.6";
+const APP_VERSION="2026-09-21.1";
 
 function useUpdateCheck(){
   const [next,setNext]=useState(null);
@@ -2093,15 +2093,23 @@ function CallupSection({players,board,matchDate,setCallup,setSettings,myPlayerId
 function rolesOf(standings,settings){
   const s=settings||{};
   const has=id=>!!id&&standings.some(p=>p.id===id);
-  const auto1=standings.length?standings[0].id:null;
-  const autoLast=standings.length>=2?standings[standings.length-1].id:null;
+  /* Il giro: chi ha già fatto il capitano o il formatore non viene più
+     proposto finché non hanno fatto tutti. Quando restano in meno di due il
+     giro è chiuso e si riparte da tutta la classifica. */
+  const fatti=Array.isArray(s.giroFatti)?s.giroFatti:[];
+  const liberi=standings.filter(p=>fatti.indexOf(p.id)<0);
+  const giroChiuso=liberi.length<2;
+  const base=giroChiuso?standings:liberi;
+  const auto1=base.length?base[0].id:null;
+  const autoLast=base.length>=2?base[base.length-1].id:null;
   const capId=has(s.captainId)?s.captainId:auto1;
   let pickId=has(s.pickerId)?s.pickerId:autoLast;
   if(pickId===capId){                     // stessa persona in tutti e due i ruoli: non si può
-    const alt=standings.find(p=>p.id!==capId);
+    const alt=base.find(p=>p.id!==capId)||standings.find(p=>p.id!==capId);
     pickId=alt?alt.id:null;
   }
-  return{capId,pickId,capManual:has(s.captainId),pickManual:has(s.pickerId)};
+  return{capId,pickId,capManual:has(s.captainId),pickManual:has(s.pickerId),
+         fatti,liberi:liberi.map(p=>p.id),giroChiuso};
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -2114,8 +2122,9 @@ const isExt=id=>/^ext\d+$/.test(String(id||""));
 const extName=id=>"Esterno "+String(id).slice(3);
 const extPlayer=id=>({id,name:extName(id),ext:true});
 
-function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capId,pickId,capManual,pickManual,decaduti,setSettings,availableIds,playAll,onUseTeams,onAggiungi}){
+function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capId,pickId,capManual,pickManual,decaduti,giro,onGiro,setSettings,availableIds,playAll,onUseTeams,onAggiungi}){
   const [scegli,setScegli]=useState(false);
+  const [giroApri,setGiroApri]=useState(false);
   const [agg,setAgg]=useState(false);
   const [modifica,setModifica]=useState(false);
 
@@ -2184,6 +2193,7 @@ function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capI
      dall'altra parte. Scritto per ruolo e non per lato, se no scegliendo i
      neri i due finivano scambiati. */
   const captainPick=side=>{
+    onGiro&&onGiro([capId,pickId]);
     setSel({phase:"done",captainSide:side,
       finalWhite:(side==="white"?[captain.id]:[picker.id]).concat(altri.filter(id=>assign[id]==="white")),
       finalBlack:(side==="black"?[captain.id]:[picker.id]).concat(altri.filter(id=>assign[id]==="black"))});
@@ -2203,6 +2213,7 @@ function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capI
     if(rimasti.length===0){
       const A=[pickId].concat(nuovi.filter(x=>x.t==="A").map(x=>x.id));
       const B=[capId].concat(nuovi.filter(x=>x.t==="B").map(x=>x.id));
+      onGiro&&onGiro([capId,pickId]);
       setSel({picks:nuovi,phase:"done",captainSide:null,finalWhite:A,finalBlack:B});
     }else setSel({picks:nuovi});
   };
@@ -2294,6 +2305,47 @@ function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capI
               Appena rispondete, i ruoli passano a chi c'è.
             </div>
           )}
+          {standings.length>=2&&(
+            <div style={{background:C.card2,border:`1px solid ${C.border}`,borderRadius:12,padding:"12px 14px",marginBottom:10}}>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:10,color:C.muted,letterSpacing:1,marginBottom:4}}>🔄 GIRO DEI CAPITANI</div>
+                  <div style={{fontSize:11,color:C.muted,lineHeight:1.5}}>
+                    {(giro&&giro.chiuso)
+                      ?<>Il giro è chiuso: hanno fatto tutti, si riparte da capo.</>
+                      :(giro&&giro.fatti.length)
+                        ?<>Già fatto: <strong style={{color:C.text}}>{giro.fatti.map(id=>(standings.find(p=>p.id===id)||{}).name).filter(Boolean).join(", ")}</strong> ({giro.fatti.length} su {standings.length}). Non vengono proposti finché non hanno fatto tutti.</>
+                        :<>Non l'ha ancora fatto nessuno: si parte dal primo e dall'ultimo della classifica.</>}
+                  </div>
+                </div>
+                <Btn onClick={()=>setGiroApri(v=>!v)} variant="ghost" small style={{flexShrink:0}}>{giroApri?"Chiudi":"Sistema"}</Btn>
+              </div>
+              {giroApri&&(
+                <div style={{borderTop:`1px solid ${C.border}`,marginTop:10,paddingTop:10}}>
+                  <div style={{fontSize:11,color:C.muted,marginBottom:8,lineHeight:1.5}}>
+                    Segna chi ha già fatto il capitano o il formatore in questo giro. Serve per le partite giocate prima dell'app.
+                  </div>
+                  {standings.map(p=>{
+                    const fatto=(giro&&giro.fatti.indexOf(p.id)>=0);
+                    return(
+                      <button key={p.id} onClick={()=>{
+                          const cur=(giro&&giro.fatti)||[];
+                          setSettings({giroFatti:fatto?cur.filter(x=>x!==p.id):cur.concat(p.id)});
+                        }}
+                        style={{width:"100%",display:"flex",alignItems:"center",gap:9,marginBottom:6,padding:"7px 9px",borderRadius:9,cursor:"pointer",
+                                border:`1px solid ${fatto?C.accent+"55":C.border}`,background:fatto?C.accent+"10":C.card,fontFamily:"'DM Sans',sans-serif"}}>
+                        <Avatar player={p} size={24}/>
+                        <span style={{flex:1,textAlign:"left",fontSize:13,color:fatto?C.accent:C.text,fontWeight:fatto?700:500}}>{p.name}</span>
+                        <span style={{fontSize:11,color:fatto?C.accent:C.muted}}>{fatto?"già fatto":"—"}</span>
+                      </button>
+                    );
+                  })}
+                  <Btn onClick={()=>setSettings({giroFatti:[]})} variant="ghost" full small style={{marginTop:6}}>↺ Ricomincia il giro</Btn>
+                </div>
+              )}
+            </div>
+          )}
+
           <Btn onClick={()=>setScegli(v=>!v)} variant="ghost" full small>
             {scegli?"Chiudi":(capManual||pickManual||(decaduti||[]).length>0)?"Capitano e formatore scelti a mano · cambia":"Scegli capitano e formatore a mano"}
           </Btn>
@@ -3107,6 +3159,19 @@ function CialtronApp(){
     say(!ids.length?"MVP tolto":(ids.length>1?"MVP condiviso assegnato":"MVP assegnato"));
   },[writeData,say]);
 
+  /* Il giro dei capitani: quando le squadre sono fatte, capitano e formatore
+     si segnano come "già fatto" e non vengono più proposti finché non hanno
+     fatto tutti. Chiuso il giro la lista si azzera e si riparte. */
+  const segnaGiro=useCallback(ids=>{
+    const nuovi=(ids||[]).filter(Boolean);
+    if(!nuovi.length)return;
+    const cur=Array.isArray(board.settings.giroFatti)?board.settings.giroFatti:[];
+    const next=cur.concat(nuovi.filter(id=>cur.indexOf(id)<0));
+    if(next.length===cur.length)return;
+    const restano=standings.filter(p=>next.indexOf(p.id)<0);
+    setSettings({giroFatti:restano.length>=2?next:[]});
+  },[board.settings.giroFatti,standings,setSettings]);
+
   const setCallup=useCallback(async(playerId,value,iso)=>{
     const{data,error}=await sb.rpc('set_callup',{p_group:groupId,p_date:iso,p_player:playerId,p_value:value||""});
     if(error){say(errText(error));return;}
@@ -3403,6 +3468,7 @@ function CialtronApp(){
                               capId={capId} pickId={pickId} capManual={capManual} pickManual={pickManual} setSettings={setSettings}
                               availableIds={availableIds} eligible={eligible} playAll={!!board.settings.playAll}
                               decaduti={ruoliDecaduti}
+                              giro={{fatti:ruoliVivi.fatti||[],chiuso:!!ruoliVivi.giroChiuso}} onGiro={segnaGiro}
                               onUseTeams={usaSquadre}
                               onAggiungi={pid=>setCallup(pid,"si",matchIso)}/>}
         {tab==="players"  &&<PlayersSection players={playersView} matches={matches} isAdmin={isAdmin} myPlayerId={myPlayerId}
