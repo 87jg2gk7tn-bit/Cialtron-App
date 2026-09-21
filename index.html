@@ -56,7 +56,7 @@ const C={accent:"#B8FF00",bg:"#090909",card:"#111",card2:"#1A1A1A",card3:"#222",
 /* Versione pubblicata: confrontata con version.json per avvisare che c'è
    un aggiornamento. Sul telefono la pagina resta in cache, senza questo
    controllo le modifiche non arriverebbero finché non si svuota la cache. */
-const APP_VERSION="2026-09-21.2";
+const APP_VERSION="2026-09-21.3";
 
 function useUpdateCheck(){
   const [next,setNext]=useState(null);
@@ -2086,11 +2086,12 @@ function CallupSection({players,board,matchDate,setCallup,setSettings,myPlayerId
   );
 }
 
-/* Capitano e picker: di norma il primo e l'ultimo della classifica, ma il
-   gruppo può sceglierli a mano — uno manca, uno ha già fatto il capitano
-   tre volte di fila, si decide diversamente. La scelta vale finché non la
-   si toglie. */
-function rolesOf(standings,settings){
+/* Capitano e picker: comanda sempre la classifica — il primo e l'ultimo.
+   Il gruppo può sceglierli a mano per una volta (uno manca, ci si mette
+   d'accordo diversamente), ma quella scelta vale SOLO per la partita per
+   cui è stata fatta: alla partita dopo si torna alla classifica da sola.
+   Se no un capitano scelto una volta resterebbe capitano per sempre. */
+function rolesOf(standings,settings,matchIso){
   const s=settings||{};
   /* Il giro: chi ha già fatto il capitano o il formatore non viene più
      proposto finché non hanno fatto tutti. Quando restano in meno di due il
@@ -2099,10 +2100,11 @@ function rolesOf(standings,settings){
   const liberi=standings.filter(p=>fatti.indexOf(p.id)<0);
   const giroChiuso=liberi.length<2;
   const base=giroChiuso?standings:liberi;
-  /* Il giro viene prima della scelta a mano: chi è segnato "già fatto" non
-     torna in ballo nemmeno se era stato nominato prima che il giro
-     esistesse, se no una vecchia nomina blocca la rotazione per sempre. */
-  const has=id=>!!id&&base.some(p=>p.id===id);
+  /* La nomina a mano è buona solo se è stata fatta per QUESTA partita, e
+     solo per chi il giro non l'ha ancora fatto: il giro e la classifica
+     vengono prima di una scelta vecchia. */
+  const manVale=!!matchIso&&s.ruoliIso===matchIso;
+  const has=id=>manVale&&!!id&&base.some(p=>p.id===id);
   const auto1=base.length?base[0].id:null;
   const autoLast=base.length>=2?base[base.length-1].id:null;
   const capId=has(s.captainId)?s.captainId:auto1;
@@ -2112,8 +2114,9 @@ function rolesOf(standings,settings){
     pickId=alt?alt.id:null;
   }
   return{capId,pickId,capManual:has(s.captainId),pickManual:has(s.pickerId),
-         fatti,liberi:liberi.map(p=>p.id),giroChiuso,
-         manCapId:s.captainId||null,manPickId:s.pickerId||null};
+         fatti,liberi:liberi.map(p=>p.id),giroChiuso,manVale,
+         manCapId:manVale?(s.captainId||null):null,
+         manPickId:manVale?(s.pickerId||null):null};
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -2126,7 +2129,7 @@ const isExt=id=>/^ext\d+$/.test(String(id||""));
 const extName=id=>"Esterno "+String(id).slice(3);
 const extPlayer=id=>({id,name:extName(id),ext:true});
 
-function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capId,pickId,capManual,pickManual,decaduti,giro,onGiro,setSettings,availableIds,playAll,onUseTeams,onAggiungi}){
+function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capId,pickId,capManual,pickManual,decaduti,giro,onGiro,setSettings,availableIds,playAll,matchIso,matchLabel,onUseTeams,onAggiungi}){
   const [scegli,setScegli]=useState(false);
   const [giroApri,setGiroApri]=useState(false);
   const [agg,setAgg]=useState(false);
@@ -2167,10 +2170,12 @@ function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capI
   const inGioco=baseIds.concat(Array.from({length:extN},(_,i)=>"ext"+(i+1)));
 
   const nomina=(ruolo,id)=>{
-    if(ruolo==="cap")setSettings({captainId:id,pickerId:pickId===id?null:(pickManual?pickId:null)});
-    else setSettings({pickerId:id,captainId:capId===id?null:(capManual?capId:null)});
+    /* ruoliIso: la partita per cui vale questa scelta. Alla prossima
+       partita la data non torna più e comanda di nuovo la classifica. */
+    if(ruolo==="cap")setSettings({captainId:id,pickerId:pickId===id?null:(pickManual?pickId:null),ruoliIso:matchIso});
+    else setSettings({pickerId:id,captainId:capId===id?null:(capManual?capId:null),ruoliIso:matchIso});
   };
-  const automatico=()=>setSettings({captainId:null,pickerId:null});
+  const automatico=()=>setSettings({captainId:null,pickerId:null,ruoliIso:null});
 
   const avvia=m=>{
     const p=inGioco.slice();
@@ -2290,7 +2295,7 @@ function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capI
                 <Avatar player={player} size={56}/>
                 <div style={{fontWeight:800,color,marginTop:10,fontSize:15}}>{player.name}{myPlayerId===player.id?" (tu)":""}</div>
                 <div style={{fontSize:11,color:C.muted,marginTop:4}}>{desc}</div>
-                {man&&<div style={{fontSize:10,color:C.muted,fontStyle:"italic"}}>scelto a mano</div>}
+                {man&&<div style={{fontSize:10,color:C.muted,fontStyle:"italic"}}>scelto a mano, solo per stavolta</div>}
               </div>
             ))}
           </div>
@@ -2364,7 +2369,10 @@ function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capI
           </Btn>
           {scegli&&(
             <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:12,marginTop:8}}>
-              <div style={{fontSize:11,color:C.muted,marginBottom:10,lineHeight:1.5}}>Senza scelte è il primo e l'ultimo della classifica. Lo può cambiare chiunque.</div>
+              <div style={{fontSize:11,color:C.muted,marginBottom:10,lineHeight:1.5}}>
+                Comanda la classifica: il primo è capitano, l'ultimo è formatore{giro&&!giro.chiuso&&giro.fatti.length?", fra chi il giro non l'ha ancora fatto":""}. Lo può cambiare chiunque,
+                ma la scelta vale <strong style={{color:C.text}}>solo per la partita{matchLabel?" di "+matchLabel:""}</strong>: alla prossima si torna alla classifica.
+              </div>
               {standings.map(p=>(
                 <div key={p.id} style={{display:"flex",alignItems:"center",gap:9,padding:"6px 0",borderBottom:`1px solid ${C.border}`}}>
                   <Avatar player={p} size={28}/>
@@ -3347,12 +3355,15 @@ function CialtronApp(){
     const senzaAssenti=standings.filter(p=>assentiIds.indexOf(p.id)<0);
     return senzaAssenti.length>=2?senzaAssenti:standings;
   },[standings,availableIds,assentiIds,board.settings.playAll]);
-  const ruoliVivi=useMemo(()=>rolesOf(eligible,board.settings),[eligible,board.settings]);
+  const ruoliVivi=useMemo(()=>rolesOf(eligible,board.settings,matchIso),[eligible,board.settings,matchIso]);
   /* Ruolo scelto a mano e poi decaduto perché quel giocatore non c'è: va detto,
      se no sembra che l'app abbia ignorato la scelta del gruppo. */
   const ruoliDecaduti=useMemo(()=>{
     const s=board.settings||{};
     const liberi=ruoliVivi.liberi||[];
+    /* Una nomina di una partita passata non è "decaduta": è semplicemente
+       finita. Non c'è niente da spiegare, comanda la classifica. */
+    if(!ruoliVivi.manVale)return [];
     return [["captainId","capitano"],["pickerId","formatore"]].map(([k,ruolo])=>{
       const id=s[k];
       if(!id)return null;
@@ -3493,6 +3504,7 @@ function CialtronApp(){
                               decaduti={ruoliDecaduti}
                               giro={{fatti:ruoliVivi.fatti||[],chiuso:!!ruoliVivi.giroChiuso,
                                      manCap:ruoliVivi.manCapId,manPick:ruoliVivi.manPickId}} onGiro={segnaGiro}
+                              matchIso={matchIso} matchLabel={dataLunga(matchDate)}
                               onUseTeams={usaSquadre}
                               onAggiungi={pid=>setCallup(pid,"si",matchIso)}/>}
         {tab==="players"  &&<PlayersSection players={playersView} matches={matches} isAdmin={isAdmin} myPlayerId={myPlayerId}
