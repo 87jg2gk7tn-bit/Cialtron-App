@@ -56,7 +56,7 @@ const C={accent:"#B8FF00",bg:"#090909",card:"#111",card2:"#1A1A1A",card3:"#222",
 /* Versione pubblicata: confrontata con version.json per avvisare che c'è
    un aggiornamento. Sul telefono la pagina resta in cache, senza questo
    controllo le modifiche non arriverebbero finché non si svuota la cache. */
-const APP_VERSION="2026-09-21.3";
+const APP_VERSION="2026-09-21.4";
 
 function useUpdateCheck(){
   const [next,setNext]=useState(null);
@@ -2086,7 +2086,9 @@ function CallupSection({players,board,matchDate,setCallup,setSettings,myPlayerId
   );
 }
 
-/* Capitano e picker: comanda sempre la classifica — il primo e l'ultimo.
+/* Capitano e formatore: comanda sempre la classifica. Il PRIMO fa le due
+   squadre (formatore), l'ULTIMO sceglie da che parte stare (capitano):
+   chi va meglio si prende il lavoro, chi va peggio si prende la scelta.
    Il gruppo può sceglierli a mano per una volta (uno manca, ci si mette
    d'accordo diversamente), ma quella scelta vale SOLO per la partita per
    cui è stata fatta: alla partita dopo si torna alla classifica da sola.
@@ -2105,15 +2107,26 @@ function rolesOf(standings,settings,matchIso){
      vengono prima di una scelta vecchia. */
   const manVale=!!matchIso&&s.ruoliIso===matchIso;
   const has=id=>manVale&&!!id&&base.some(p=>p.id===id);
-  const auto1=base.length?base[0].id:null;
-  const autoLast=base.length>=2?base[base.length-1].id:null;
-  const capId=has(s.captainId)?s.captainId:auto1;
-  let pickId=has(s.pickerId)?s.pickerId:autoLast;
-  if(pickId===capId){                     // stessa persona in tutti e due i ruoli: non si può
-    const alt=base.find(p=>p.id!==capId)||standings.find(p=>p.id!==capId);
-    pickId=alt?alt.id:null;
+  const primo=base.length?base[0].id:null;
+  const ultimo=base.length>=2?base[base.length-1].id:null;
+  /* il primo forma le squadre, l'ultimo sceglie il lato */
+  const capMan=has(s.captainId), pickMan=has(s.pickerId);
+  let capId=capMan?s.captainId:ultimo;
+  let pickId=pickMan?s.pickerId:primo;
+  if(capId&&capId===pickId){
+    /* Stessa persona nei due ruoli: non si può. A spostarsi è quello
+       automatico — la scelta del gruppo resta dov'è l'hanno messa. Se
+       sono a mano tutti e due, il capitano tiene il posto. */
+    const fuori=id=>base.filter(p=>p.id!==id);
+    if(pickMan&&!capMan){
+      const l=fuori(pickId);
+      capId=l.length?l[l.length-1].id:((standings.find(p=>p.id!==pickId)||{}).id||null);
+    }else{
+      const l=fuori(capId);
+      pickId=l.length?l[0].id:((standings.find(p=>p.id!==capId)||{}).id||null);
+    }
   }
-  return{capId,pickId,capManual:has(s.captainId),pickManual:has(s.pickerId),
+  return{capId,pickId,capManual:capMan,pickManual:pickMan,
          fatti,liberi:liberi.map(p=>p.id),giroChiuso,manVale,
          manCapId:manVale?(s.captainId||null):null,
          manPickId:manVale?(s.pickerId||null):null};
@@ -2312,7 +2325,7 @@ function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capI
 
           {disponibili.length<2&&!playAll&&(
             <div style={{fontSize:11,color:C.muted,marginBottom:10,lineHeight:1.5,textAlign:"center"}}>
-              Ancora meno di due sì: per ora capitano e formatore sono il primo e l'ultimo di tutta la rosa.
+              Ancora meno di due sì: per ora formatore e capitano sono il primo e l'ultimo di tutta la rosa.
               Appena rispondete, i ruoli passano a chi c'è.
             </div>
           )}
@@ -2370,7 +2383,7 @@ function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capI
           {scegli&&(
             <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:12,marginTop:8}}>
               <div style={{fontSize:11,color:C.muted,marginBottom:10,lineHeight:1.5}}>
-                Comanda la classifica: il primo è capitano, l'ultimo è formatore{giro&&!giro.chiuso&&giro.fatti.length?", fra chi il giro non l'ha ancora fatto":""}. Lo può cambiare chiunque,
+                Comanda la classifica: il primo è formatore e fa le squadre, l'ultimo è capitano e sceglie da che parte stare{giro&&!giro.chiuso&&giro.fatti.length?", fra chi il giro non l'ha ancora fatto":""}. Lo può cambiare chiunque,
                 ma la scelta vale <strong style={{color:C.text}}>solo per la partita{matchLabel?" di "+matchLabel:""}</strong>: alla prossima si torna alla classifica.
               </div>
               {standings.map(p=>(
