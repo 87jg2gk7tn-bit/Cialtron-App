@@ -1,0 +1,5 @@
+node_modules/
+# generati da test/browser/mk-test.sh, non vanno versionati
+test/browser/test.html
+test/browser/version.json
+test/browser/s-*.png

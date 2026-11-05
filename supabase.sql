@@ -529,14 +529,17 @@ end $$;
 
 alter table public.board add column if not exists votes jsonb not null default '{}'::jsonb;
 
+-- La vecchia firma a cinque argomenti va tolta: con tutte e due in piedi
+-- una chiamata a cinque sarebbe ambigua e il database la rifiuterebbe.
+drop function if exists public.set_vote(uuid,text,text,text,text);
+
 create or replace function public.set_vote(p_group uuid, p_match text, p_round text,
-                                           p_a text default null, p_b text default null)
+                                           p_a text default null, p_b text default null,
+                                           p_who text default null)
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare cur jsonb; part jsonb; io text; blocco jsonb;
 begin
   if not is_member(p_group) then raise exception 'non sei in questo gruppo'; end if;
-  io := my_player(p_group);
-  if io is null then raise exception 'non sei collegato a un giocatore della rosa'; end if;
 
   select e into part
     from groups g, jsonb_array_elements(coalesce(g.data->'matches','[]'::jsonb)) e
@@ -544,8 +547,12 @@ begin
    limit 1;
   if part is null then raise exception 'partita non trovata'; end if;
 
+  -- sotto quale nome finisce il voto: il mio, o quello di chi me l'ha dettato
+  io := coalesce(nullif(p_who,''), my_player(p_group));
+  if io is null then raise exception 'non sei collegato a un giocatore della rosa'; end if;
+
   if not ((coalesce(part->'white','[]'::jsonb) ? io) or (coalesce(part->'black','[]'::jsonb) ? io)) then
-    raise exception 'puoi votare solo se hai giocato questa partita';
+    raise exception 'si vota solo per chi ha giocato questa partita';
   end if;
 
   insert into board (group_id) values (p_group) on conflict (group_id) do nothing;
@@ -577,8 +584,8 @@ begin
 end;
 $$;
 
-revoke execute on function public.set_vote(uuid,text,text,text,text) from anon;
-grant  execute on function public.set_vote(uuid,text,text,text,text) to authenticated;
+revoke execute on function public.set_vote(uuid,text,text,text,text,text) from anon;
+grant  execute on function public.set_vote(uuid,text,text,text,text,text) to authenticated;
 
 -- ═══════════════════════════════════════════════════════════════════
 --  SALVARE ROSA E PARTITE: CI SCRIVONO TUTTI
