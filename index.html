@@ -56,7 +56,7 @@ const C={accent:"#B8FF00",bg:"#090909",card:"#111",card2:"#1A1A1A",card3:"#222",
 /* Versione pubblicata: confrontata con version.json per avvisare che c'è
    un aggiornamento. Sul telefono la pagina resta in cache, senza questo
    controllo le modifiche non arriverebbero finché non si svuota la cache. */
-const APP_VERSION="2026-11-05.1";
+const APP_VERSION="2026-11-11.1";
 
 function useUpdateCheck(){
   const [next,setNext]=useState(null);
@@ -2197,7 +2197,7 @@ const isExt=id=>/^ext\d+$/.test(String(id||""));
 const extName=id=>"Esterno "+String(id).slice(3);
 const extPlayer=id=>({id,name:extName(id),ext:true});
 
-function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capId,pickId,capManual,pickManual,decaduti,giro,onGiro,setSettings,availableIds,playAll,matchIso,matchLabel,onUseTeams,onAggiungi}){
+function TeamsSection({standings,classifica,eligible,teamSel,setSel,myPlayerId,isAdmin,capId,pickId,capManual,pickManual,decaduti,giro,onGiro,setSettings,availableIds,playAll,matchIso,matchLabel,onUseTeams,onAggiungi}){
   const [scegli,setScegli]=useState(false);
   const [giroApri,setGiroApri]=useState(false);
   const [agg,setAgg]=useState(false);
@@ -2373,6 +2373,8 @@ function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capI
               {(decaduti||[]).map(d=>(
                 <div key={d.ruolo}>{d.name} era {d.ruolo} per scelta vostra, ma {d.motivo==="giro"
                   ?"l'ha già fatto in questo giro: il ruolo passa a chi non l'ha ancora fatto."
+                  :d.motivo==="visitatore"
+                  ?"è segnato come visitatore: il ruolo passa alla classifica."
                   :"ha detto che non c'è: il ruolo passa alla classifica."}</div>
               ))}
             </div>
@@ -2384,7 +2386,7 @@ function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capI
               Appena rispondete, i ruoli passano a chi c'è.
             </div>
           )}
-          {standings.length>=2&&(
+          {(classifica||standings).length>=2&&(
             <div style={{background:C.card2,border:`1px solid ${C.border}`,borderRadius:12,padding:"12px 14px",marginBottom:10}}>
               <div style={{display:"flex",alignItems:"center",gap:8}}>
                 <div style={{flex:1,minWidth:0}}>
@@ -2393,7 +2395,7 @@ function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capI
                     {(giro&&giro.chiuso)
                       ?<>Il giro è chiuso: hanno fatto tutti, si riparte da capo.</>
                       :(giro&&giro.fatti.length)
-                        ?<>Già fatto: <strong style={{color:C.text}}>{giro.fatti.map(id=>(standings.find(p=>p.id===id)||{}).name).filter(Boolean).join(", ")}</strong> ({giro.fatti.length} su {standings.length}). Non vengono proposti finché non hanno fatto tutti.</>
+                        ?<>Già fatto: <strong style={{color:C.text}}>{giro.fatti.map(id=>(standings.find(p=>p.id===id)||{}).name).filter(Boolean).join(", ")}</strong> ({giro.fatti.length} su {(classifica||standings).length}). Non vengono proposti finché non hanno fatto tutti.</>
                         :<>Non l'ha ancora fatto nessuno: si parte dal primo e dall'ultimo della classifica.</>}
                   </div>
                 </div>
@@ -2404,7 +2406,7 @@ function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capI
                   <div style={{fontSize:11,color:C.muted,marginBottom:8,lineHeight:1.5}}>
                     Segna chi ha già fatto il capitano o il formatore in questo giro. Serve per le partite giocate prima dell'app.
                   </div>
-                  {standings.map(p=>{
+                  {(classifica||standings).map(p=>{
                     const fatto=(giro&&giro.fatti.indexOf(p.id)>=0);
                     return(
                       <button key={p.id} onClick={()=>{
@@ -2441,7 +2443,7 @@ function TeamsSection({standings,eligible,teamSel,setSel,myPlayerId,isAdmin,capI
                 Comanda la classifica: il primo è formatore e fa le squadre, l'ultimo è capitano e sceglie da che parte stare{giro&&!giro.chiuso&&giro.fatti.length?", fra chi il giro non l'ha ancora fatto":""}. Lo può cambiare chiunque,
                 ma la scelta vale <strong style={{color:C.text}}>solo per la partita{matchLabel?" di "+matchLabel:""}</strong>: alla prossima si torna alla classifica.
               </div>
-              {standings.map(p=>(
+              {(classifica||standings).map(p=>(
                 <div key={p.id} style={{display:"flex",alignItems:"center",gap:9,padding:"6px 0",borderBottom:`1px solid ${C.border}`}}>
                   <Avatar player={p} size={28}/>
                   <span style={{flex:1,fontSize:13,color:C.text,fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{p.name}</span>
@@ -2739,6 +2741,7 @@ function PlayersSection({players,matches,isAdmin,myPlayerId,updatePlayers,setPho
      resta agli admin. */
   const canEdit=p=>true;
   const [showAdd,setShowAdd]=useState(false), [newName,setNewName]=useState(""), [newPhoto,setNewPhoto]=useState(null);
+  const [newVisit,setNewVisit]=useState(false);
   const [editId,setEditId]=useState(null), [editName,setEditName]=useState(""), [editVals,setEditVals]=useState({});
   const [busy,setBusy]=useState(false), [delP,setDelP]=useState(null), [delSicuro,setDelSicuro]=useState(false);
   const [imp,setImp]=useState(null), [impErr,setImpErr]=useState("");
@@ -2749,10 +2752,24 @@ function PlayersSection({players,matches,isAdmin,myPlayerId,updatePlayers,setPho
     if(!newName.trim()||busy)return;
     setBusy(true);
     const id=uid();
-    await updatePlayers(list=>[...list,{id,name:newName.trim(),base:null,photoRev:null}]);
+    await updatePlayers(list=>[...list,{id,name:newName.trim(),base:null,photoRev:null,visitor:newVisit}]);
     if(newPhoto) await setPhoto(id,newPhoto);
-    setNewName("");setNewPhoto(null);setShowAdd(false);setBusy(false);
+    setNewName("");setNewPhoto(null);setNewVisit(false);setShowAdd(false);setBusy(false);
   };
+  /* Visitatore: gioca, ma non va in classifica e non fa il giro dei
+     capitani. Si toglie quando vuoi, e i suoi numeri restano lì: le
+     partite le ha giocate davvero. */
+  const setVisitatore=(p,on)=>updatePlayers(list=>list.map(x=>x.id===p.id?{...x,visitor:!!on}:x));
+  const Spunta=({on,onChange,sub})=>(
+    <label style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}>
+      <input type="checkbox" checked={!!on} onChange={e=>onChange(e.target.checked)}
+        style={{width:18,height:18,accentColor:C.accent,flexShrink:0,cursor:"pointer"}}/>
+      <span style={{flex:1}}>
+        <span style={{fontSize:13,fontWeight:700,color:on?C.accent:C.text}}>Visitatore</span>
+        <span style={{display:"block",fontSize:11,color:C.muted,lineHeight:1.4}}>{sub}</span>
+      </span>
+    </label>
+  );
   /* Dalla matita si sistema tutto insieme: nome e numeri. Serve per aggiornare
      al volo dopo la partita, senza ricaricare l'Excel ogni volta. */
   const apriEdit=(p,st)=>{
@@ -2834,6 +2851,9 @@ function PlayersSection({players,matches,isAdmin,myPlayerId,updatePlayers,setPho
                 <input type="file" accept="image/*" ref={newPhotoRef} style={{display:"none"}} onChange={async e=>{const f=e.target.files[0];if(f){const b=await resizePhoto(f);setNewPhoto(b);}}}/>
                 <input placeholder="Nome giocatore…" value={newName} onChange={e=>setNewName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submitAdd()} style={{flex:1,background:C.card2,border:`1px solid ${C.border}`,color:C.text,borderRadius:8,padding:"10px 14px",fontSize:14,fontFamily:"'DM Sans',sans-serif"}}/>
               </div>
+              <div style={{marginBottom:14}}>
+                <Spunta on={newVisit} onChange={setNewVisit} sub="Gioca le partite, ma non entra in classifica né nel giro dei capitani."/>
+              </div>
               <Btn onClick={submitAdd} disabled={busy} full style={{padding:"10px 0"}}>{busy?"Aggiungo…":"Aggiungi"}</Btn>
             </div>
           )}
@@ -2859,7 +2879,8 @@ function PlayersSection({players,matches,isAdmin,myPlayerId,updatePlayers,setPho
                 <div style={{flex:1,minWidth:0}}>
                   {canEdit(p)&&isEd
                     ?<input value={editName} onChange={e=>setEditName(e.target.value)} autoFocus onKeyDown={e=>e.key==="Enter"&&salvaEdit(p,s)} style={{width:"100%",background:C.card2,border:`1px solid ${C.accent}`,color:C.text,borderRadius:6,padding:"7px 10px",fontSize:15,fontFamily:"'DM Sans',sans-serif",fontWeight:700}}/>
-                    :<div style={{fontWeight:800,fontSize:16,color:C.text}}>{p.name}{p.id===myPlayerId&&<span style={{fontSize:10,color:C.accent,fontWeight:800,marginLeft:6,letterSpacing:1}}>SEI TU</span>}</div>
+                    :<div style={{fontWeight:800,fontSize:16,color:C.text}}>{p.name}{p.id===myPlayerId&&<span style={{fontSize:10,color:C.accent,fontWeight:800,marginLeft:6,letterSpacing:1}}>SEI TU</span>}
+                       {p.visitor&&<span style={{fontSize:9,color:C.muted,fontWeight:800,marginLeft:6,letterSpacing:1,border:`1px solid ${C.border}`,borderRadius:5,padding:"1px 5px",verticalAlign:"middle"}}>VISITATORE</span>}</div>
                   }
                   <div style={{fontSize:12,color:C.muted,marginTop:3}}>Media: <span style={{color:C.accent,fontWeight:700}}>{s.avg.toFixed(2)}</span> · {s.presences} presenze</div>
                 </div>
@@ -2888,6 +2909,13 @@ function PlayersSection({players,matches,isAdmin,myPlayerId,updatePlayers,setPho
                   </div>);
                 })}
               </div>
+              {canEdit(p)&&(
+                <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${C.border}`}}>
+                  <Spunta on={p.visitor} onChange={on=>setVisitatore(p,on)}
+                    sub={p.visitor?"Gioca, ma non è in classifica né nel giro dei capitani. Togli la spunta per rimetterlo dentro."
+                                  :"Gioca le partite, ma non entra in classifica né nel giro dei capitani."}/>
+                </div>
+              )}
               {isEd&&(
                 <div style={{display:"flex",alignItems:"center",gap:8,marginTop:10,flexWrap:"wrap"}}>
                   <div style={{fontSize:11,color:C.muted,flex:1,minWidth:150,lineHeight:1.5}}>Dalle partite: {s.auto.presences}·{s.auto.wins}·{s.auto.goals}·{s.auto.mvps}. Quello che cambi resta come correzione, il resto continua ad aggiornarsi da solo.</div>
@@ -3187,6 +3215,11 @@ function CialtronApp(){
     playersView.map(p=>({...p,stats:computeStats(p,matches)}))
       .sort((a,b)=>b.stats.avg-a.stats.avg||b.stats.points-a.stats.points||b.stats.goals-a.stats.goals),
     [playersView,matches]);
+  /* I visitatori giocano — si convocano, si mettono in squadra, segnano —
+     ma non entrano in classifica e non fanno il giro dei capitani. Quindi
+     due liste: "standings" è tutta la rosa e serve per giocare, "classifica"
+     è senza visitatori e serve per classifica, PDF, capitano e formatore. */
+  const classifica=useMemo(()=>standings.filter(p=>!p.visitor),[standings]);
 
   /* ─── scritture ─── */
   /* Rosa e partite le scrive chiunque nel gruppo, non solo gli admin: chi
@@ -3257,14 +3290,14 @@ function CialtronApp(){
     const cur=Array.isArray(board.settings.giroFatti)?board.settings.giroFatti:[];
     const next=cur.concat(nuovi.filter(id=>cur.indexOf(id)<0));
     if(next.length===cur.length)return;
-    const restano=standings.filter(p=>next.indexOf(p.id)<0);
+    const restano=classifica.filter(p=>next.indexOf(p.id)<0);
     const patch={giroFatti:restano.length>=2?next:[]};
     /* chi ha appena fatto capitano o formatore non resta nominato a mano:
        la nomina vecchia scavalcherebbe la rotazione alla prossima partita */
     if(next.indexOf(board.settings.captainId)>=0)patch.captainId=null;
     if(next.indexOf(board.settings.pickerId)>=0)patch.pickerId=null;
     setSettings(patch);
-  },[board.settings.giroFatti,board.settings.captainId,board.settings.pickerId,standings,setSettings]);
+  },[board.settings.giroFatti,board.settings.captainId,board.settings.pickerId,classifica,setSettings]);
 
   const setCallup=useCallback(async(playerId,value,iso)=>{
     const{data,error}=await sb.rpc('set_callup',{p_group:groupId,p_date:iso,p_player:playerId,p_value:value||""});
@@ -3423,7 +3456,7 @@ function CialtronApp(){
     const senzaAssenti=standings.filter(p=>assentiIds.indexOf(p.id)<0);
     return senzaAssenti.length>=2?senzaAssenti:standings;
   },[standings,availableIds,assentiIds,board.settings.playAll]);
-  const ruoliVivi=useMemo(()=>rolesOf(eligible,board.settings,matchIso),[eligible,board.settings,matchIso]);
+  const ruoliVivi=useMemo(()=>rolesOf(eligible.filter(p=>!p.visitor),board.settings,matchIso),[eligible,board.settings,matchIso]);
   /* Ruolo scelto a mano e poi decaduto perché quel giocatore non c'è: va detto,
      se no sembra che l'app abbia ignorato la scelta del gruppo. */
   const ruoliDecaduti=useMemo(()=>{
@@ -3437,6 +3470,7 @@ function CialtronApp(){
       if(!id)return null;
       const p=standings.find(x=>x.id===id);
       if(!p)return null;
+      if(p.visitor)return{ruolo,name:p.name,motivo:"visitatore"};
       if(!eligible.some(x=>x.id===id))return{ruolo,name:p.name,motivo:"assente"};
       /* c'è, ma l'ha già fatto in questo giro: la nomina vecchia salta */
       if(!ruoliVivi.giroChiuso&&liberi.indexOf(id)<0)return{ruolo,name:p.name,motivo:"giro"};
@@ -3555,7 +3589,7 @@ function CialtronApp(){
       </nav>
 
       <main style={{maxWidth:700,margin:"0 auto",padding:"22px 14px 100px"}}>
-        {tab==="standings"&&<StandingsSection standings={standings} matches={matches} gruppo={group.name} say={say}
+        {tab==="standings"&&<StandingsSection standings={classifica} matches={matches} gruppo={group.name} say={say}
                               isAdmin={isAdmin} updatePlayers={updatePlayers} capId={capId} pickId={pickId}
                               votes={board.votes||{}} setVote={setVote} setMatchMvps={setMatchMvps}
                               myPlayerId={myPlayerId} players={playersView}/>}
@@ -3566,7 +3600,7 @@ function CialtronApp(){
                               golVivo={golVivo} togliGolVivo={togliGolVivo} azzeraGolVivo={azzeraGolVivo}
                               squadreFatte={teamSel&&teamSel.phase==="done"?{white:teamSel.finalWhite||[],black:teamSel.finalBlack||[]}:null}
                               prefill={prefill} onPrefillUsed={prefillUsato}/>}
-        {tab==="teams"    &&<TeamsSection standings={standings} teamSel={teamSel} setSel={setSel} myPlayerId={myPlayerId} isAdmin={isAdmin}
+        {tab==="teams"    &&<TeamsSection standings={standings} classifica={classifica} teamSel={teamSel} setSel={setSel} myPlayerId={myPlayerId} isAdmin={isAdmin}
                               capId={capId} pickId={pickId} capManual={capManual} pickManual={pickManual} setSettings={setSettings}
                               availableIds={availableIds} eligible={eligible} playAll={!!board.settings.playAll}
                               decaduti={ruoliDecaduti}
