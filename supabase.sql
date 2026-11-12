@@ -537,7 +537,7 @@ create or replace function public.set_vote(p_group uuid, p_match text, p_round t
                                            p_a text default null, p_b text default null,
                                            p_who text default null)
 returns jsonb language plpgsql security definer set search_path = public as $$
-declare cur jsonb; part jsonb; io text; blocco jsonb;
+declare cur jsonb; part jsonb; io text; blocco jsonb; ospiti text[];
 begin
   if not is_member(p_group) then raise exception 'non sei in questo gruppo'; end if;
 
@@ -555,6 +555,14 @@ begin
     raise exception 'si vota solo per chi ha giocato questa partita';
   end if;
 
+  -- esterni e visitatori giocano, ma l'MVP non lo votano e non lo prendono
+  select coalesce(array_agg(x->>'id'), '{}'::text[]) into ospiti
+    from groups g, jsonb_array_elements(coalesce(g.data->'players','[]'::jsonb)) x
+   where g.id = p_group and coalesce(x->>'visitor','false') = 'true';
+  if p_round in ('r1','r2') and (io ~ '^ext[0-9]+$' or io = any(ospiti)) then
+    raise exception 'esterni e visitatori non votano l''MVP';
+  end if;
+
   insert into board (group_id) values (p_group) on conflict (group_id) do nothing;
   select votes into cur from board where group_id = p_group for update;
   cur := coalesce(cur, '{}'::jsonb);
@@ -564,11 +572,17 @@ begin
     if p_a is null or p_b is null then raise exception 'servono due voti: un bianco e un nero'; end if;
     if not (coalesce(part->'white','[]'::jsonb) ? p_a) then raise exception 'il primo voto va a un giocatore dei bianchi'; end if;
     if not (coalesce(part->'black','[]'::jsonb) ? p_b) then raise exception 'il secondo voto va a un giocatore dei neri'; end if;
+    if p_a ~ '^ext[0-9]+$' or p_a = any(ospiti) or p_b ~ '^ext[0-9]+$' or p_b = any(ospiti) then
+      raise exception 'esterni e visitatori non si possono votare';
+    end if;
     if not (blocco ? 'r1') then blocco := blocco || jsonb_build_object('r1','{}'::jsonb); end if;
     blocco := jsonb_set(blocco, array['r1', io], jsonb_build_object('w', p_a, 'b', p_b), true);
 
   elsif p_round = 'r2' then
     if p_a is null then raise exception 'serve un voto'; end if;
+    if p_a ~ '^ext[0-9]+$' or p_a = any(ospiti) then
+      raise exception 'esterni e visitatori non si possono votare';
+    end if;
     if not (blocco ? 'r2') then blocco := blocco || jsonb_build_object('r2','{}'::jsonb); end if;
     blocco := jsonb_set(blocco, array['r2', io], to_jsonb(p_a), true);
 

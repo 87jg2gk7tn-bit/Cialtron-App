@@ -158,6 +158,29 @@ ok "il codice si può cambiare" "$(echo -n $COD | grep -cE '^[A-Z0-9]{6}$')$([ "
 orologio_fallisce "e il vecchio non vale più" "select live_goal('$VECCHIO','⬜ Pedro');"
 ok "col nuovo si segna" "$(orologio "select live_goal('$COD','⬜ Pedro')->>'chi';")" "Pedro"
 
+echo "— VOTO MVP: PER CONTO DI ALTRI, ESTERNI E VISITATORI —"
+# Una partita vera: Gianni è visitatore, ext1 è un esterno. A è Mera, B è
+# Luca, C è Gianni. Si vota il migliore dei bianchi e il migliore dei neri.
+VDATI='{"players":[{"id":"p1","name":"Mera"},{"id":"p2","name":"Perro"},{"id":"p3","name":"Luca"},{"id":"p4","name":"Ale"},{"id":"pv","name":"Gianni","visitor":true}],"matches":[{"id":"m1","white":["p1","p2","pv"],"black":["p3","p4","ext1"],"winner":"white","ext":{"ext1":{"name":"Marco","stars":3}}}]}'
+as $A "select save_data('$GID','$VDATI'::jsonb);" >/dev/null
+as $A "update group_members set player_id='p1' where group_id='$GID' and user_id=auth.uid();" >/dev/null
+as $B "update group_members set player_id='p3' where group_id='$GID' and user_id=auth.uid();" >/dev/null
+as $C "update group_members set player_id='pv' where group_id='$GID' and user_id=auth.uid();" >/dev/null
+ok "voto per me" "$(as $A "select (set_vote('$GID','m1','r1','p2','p3')->'m1'->'r1'->'p1'->>'w');")" "p2"
+ok "voto per conto di Ale" "$(as $A "select (set_vote('$GID','m1','r1','p1','p3','p4')->'m1'->'r1'->'p4'->>'w');")" "p1"
+ok "il mio resta il mio" "$(as $A "select votes->'m1'->'r1'->'p1'->>'w' from board where group_id='$GID';")" "p2"
+ok "rivotare per Ale sostituisce il suo, non ne aggiunge" "$(as $A "select (select count(*) from jsonb_object_keys(set_vote('$GID','m1','r1','p2','p4','p4')->'m1'->'r1'));")" "2"
+deve_fallire "non si vota per conto di chi non ha giocato" $A "select set_vote('$GID','m1','r1','p1','p3','p9');"
+deve_fallire "il visitatore non vota" $C "select set_vote('$GID','m1','r1','p1','p3');"
+deve_fallire "nemmeno se è un altro a votare per lui" $A "select set_vote('$GID','m1','r1','p1','p3','pv');"
+deve_fallire "l'esterno non vota" $A "select set_vote('$GID','m1','r1','p1','p3','ext1');"
+deve_fallire "il visitatore non si può votare" $A "select set_vote('$GID','m1','r1','pv','p3');"
+deve_fallire "l'esterno non si può votare" $A "select set_vote('$GID','m1','r1','p1','ext1');"
+deve_fallire "nemmeno al ballottaggio" $A "select set_vote('$GID','m1','r2','pv');"
+ok "al ballottaggio un voto normale passa" "$(as $B "select set_vote('$GID','m1','r2','p2')->'m1'->'r2'->>'p3';")" "p2"
+ok "il visitatore però può chiudere la votazione" "$(as $C "select set_vote('$GID','m1','close1')->'m1'->>'closed1';")" "true"
+deve_fallire "un estraneo non vota" $E "select set_vote('$GID','m1','r1','p1','p3');"
+
 echo
 echo "=========================="
 echo "PASSATI: $OK   FALLITI: $KO"

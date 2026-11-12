@@ -56,7 +56,7 @@ const C={accent:"#B8FF00",bg:"#090909",card:"#111",card2:"#1A1A1A",card3:"#222",
 /* Versione pubblicata: confrontata con version.json per avvisare che c'è
    un aggiornamento. Sul telefono la pagina resta in cache, senza questo
    controllo le modifiche non arriverebbero finché non si svuota la cache. */
-const APP_VERSION="2026-11-11.1";
+const APP_VERSION="2026-11-12.1";
 
 function useUpdateCheck(){
   const [next,setNext]=useState(null);
@@ -1110,8 +1110,9 @@ async function esportaClassifica(standings,matches,gruppo){
 
 /* ═══════════════════════════════════════════════════════
    VOTA L'MVP
-   Vota solo chi ha giocato l'ultima partita, esterni esclusi (non votano
-   e non si votano: non hanno scheda). Ognuno indica il migliore dei
+   Vota solo chi ha giocato l'ultima partita. Esterni e visitatori no: in
+   campo ci vanno, ma non votano e non si votano — l'MVP è una cosa del
+   gruppo, come la classifica. Ognuno indica il migliore dei
    bianchi e il migliore dei neri. Il voto si può anche registrare per
    conto di un altro: quasi nessuno apre l'app negli spogliatoi, il voto
    lo dicono a voce. Resta uno a testa — registrarlo per un altro
@@ -1129,8 +1130,9 @@ function MvpVote({match,players,votes,myPlayerId,isAdmin,onVote,onAssign,say}){
   const [chi,setChi]=useState(null);   // per chi sto votando: null = per me
 
   const nome=id=>{const p=(players||[]).find(x=>x.id===id);return (p&&p.name)||null;};
-  const bianchi=(match.white||[]).filter(id=>!isExt(id));
-  const neri=(match.black||[]).filter(id=>!isExt(id));
+  const ospite=id=>isExt(id)||!!(((players||[]).find(p=>p.id===id)||{}).visitor);
+  const bianchi=(match.white||[]).filter(id=>!ospite(id));
+  const neri=(match.black||[]).filter(id=>!ospite(id));
   const giocanti=bianchi.concat(neri);
   const v=(votes||{})[match.id]||{};
   const r1=v.r1||{}, r2=v.r2||{};
@@ -1305,8 +1307,14 @@ function MvpVote({match,players,votes,myPlayerId,isAdmin,onVote,onAssign,say}){
               Prima devi dire chi sei nella rosa. Intanto puoi registrare il voto di chi ha giocato.
             </div>
           )}
+          {!!myPlayerId&&!ioGioco&&ospite(myPlayerId)&&(
+            <div style={{fontSize:12,color:C.muted,marginBottom:12,lineHeight:1.6}}>
+              Sei segnato come visitatore: non voti, ma puoi registrare il voto di chi te lo detta.
+            </div>
+          )}
           <div style={{fontSize:12,color:C.muted,marginBottom:12,lineHeight:1.6}}>
             Si sceglie il migliore dei bianchi e il migliore dei neri. Si può votare anche sé stessi.
+            Esterni e visitatori non votano e non si votano.
           </div>
           <ChiVota/>
           {!votante?(
@@ -1614,6 +1622,7 @@ function StepBar({phase}){
 
 function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed,golVivo,squadreFatte,togliGolVivo,azzeraGolVivo}){
   const [extra,setExtra]=useState([]);   // esterni aggiunti al volo per questa partita
+  const [extInfo,setExtInfo]=useState({});   // il loro nome e le loro stelle
   const [phase,setPhase]=useState("list"), [white,setWhite]=useState([]), [black,setBlack]=useState([]);
   const [sw,setSw]=useState(""), [sb,setSb]=useState("");   // risultato: bianchi - neri
   const [mvp,setMvp]=useState(""), [goals,setGoals]=useState({});
@@ -1623,13 +1632,17 @@ function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed
   const winner=esito==="white"||esito==="black"?esito:"";
   const [busy,setBusy]=useState(false), [delId,setDelId]=useState(null);
   const [modId,setModId]=useState(null), [conferma,setConferma]=useState(false);
-  const getP=id=>players.find(p=>p.id===id)||(isExt(id)?extPlayer(id):null);
-  const inCampo=players.concat(extra.map(extPlayer));
+  /* info: nome e stelle degli esterni. Per una partita in storico sono
+     quelli salvati con lei, se no quelli della partita che sto scrivendo. */
+  const getP=(id,info)=>players.find(p=>p.id===id)||(isExt(id)?extPlayer(id,info||extInfo):null);
+  const inCampo=players.concat(extra.map(id=>extPlayer(id,extInfo)));
+  /* l'MVP non lo prendono né gli esterni né i visitatori */
+  const daMvp=id=>!isExt(id)&&!((players.find(p=>p.id===id)||{}).visitor);
   const assign=(id,team)=>{
     if(team==="white"){setWhite(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);setBlack(p=>p.filter(x=>x!==id));}
     else{setBlack(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);setWhite(p=>p.filter(x=>x!==id));}
   };
-  const reset=()=>{setPhase("list");setWhite([]);setBlack([]);setSw("");setSb("");setMvp("");setGoals({});setExtra([]);
+  const reset=()=>{setPhase("list");setWhite([]);setBlack([]);setSw("");setSb("");setMvp("");setGoals({});setExtra([]);setExtInfo({});
                    setModId(null);setConferma(false);};
 
   /* Dalla partita in corso alla registrazione: punteggio e marcatori sono già
@@ -1641,6 +1654,7 @@ function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed
     const g={};
     vivi.forEach(x=>{if(x.player_id)g[x.player_id]=String((+g[x.player_id]||0)+1);});
     setExtra(w.concat(b).filter(isExt));
+    setExtInfo((squadreFatte&&squadreFatte.extInfo)||{});
     setWhite(w);setBlack(b);
     setSw(String(gw));setSb(String(gb));
     setGoals(g);setMvp("");setModId(null);setConferma(false);
@@ -1653,6 +1667,7 @@ function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed
   const apriModifica=m=>{
     const tutti=(m.white||[]).concat(m.black||[]);
     setExtra(tutti.filter(isExt));
+    setExtInfo(m.ext||{});
     setWhite(m.white||[]);setBlack(m.black||[]);
     setSw(m.scoreWhite==null?"":String(m.scoreWhite));
     setSb(m.scoreBlack==null?"":String(m.scoreBlack));
@@ -1667,6 +1682,7 @@ function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed
     if(!prefill)return;
     const tutti=(prefill.white||[]).concat(prefill.black||[]);
     setExtra(tutti.filter(isExt));
+    setExtInfo(prefill.extInfo||{});
     setWhite(prefill.white||[]);setBlack(prefill.black||[]);
     setSw("");setSb("");setMvp("");setGoals({});setPhase("winner");
     onPrefillUsed&&onPrefillUsed();
@@ -1675,7 +1691,10 @@ function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed
     if(!winner||busy)return;
     setBusy(true);
     const g={};Object.entries(goals).forEach(([id,v])=>{if(+v>0)g[id]=+v;});
-    const dati={white,black,winner,scoreWhite:+sw,scoreBlack:+sb,mvp:mvp||null,goals:g};
+    /* nome e stelle degli esterni restano con la partita: in storico si
+       legge "Marco ★★★" e non "Esterno 2" */
+    const ext={};white.concat(black).filter(isExt).forEach(id=>{if(extInfo[id])ext[id]=extInfo[id];});
+    const dati={white,black,winner,scoreWhite:+sw,scoreBlack:+sb,mvp:mvp&&daMvp(mvp)?mvp:null,goals:g,ext};
     const lista=matches||[];
     await saveMatches(modId
       ?lista.map(m=>m.id===modId?Object.assign({},m,dati):m)
@@ -1702,7 +1721,7 @@ function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed
     <div onClick={onClick} style={{flex:1,background:selected?C.accent+"12":C.card2,border:`2px solid ${selected?C.accent:C.border}`,borderRadius:12,padding:14,cursor:onClick?"pointer":"default",transition:"all .15s"}}>
       <div style={{fontWeight:800,fontSize:14,color:selected?C.accent:C.text,marginBottom:10}}>{t==="white"?"⬜ BIANCHI":"⬛ NERI"} {selected?"🏆":""}</div>
       {ids.length===0&&<div style={{fontSize:12,color:C.muted}}>Nessuno</div>}
-      {ids.map(id=>{const p=getP(id);return p?<div key={id} style={{display:"flex",alignItems:"center",gap:7,marginBottom:6}}><Avatar player={p} size={24}/><span style={{fontSize:13,color:C.text}}>{p.name}</span></div>:null;})}
+      {ids.map(id=>{const p=getP(id);return p?<div key={id} style={{display:"flex",alignItems:"center",gap:7,marginBottom:6}}><Avatar player={p} size={24}/><span style={{fontSize:13,color:C.text}}>{p.name}{p.ext&&<Stelle n={p.stars} size={10}/>}</span></div>:null;})}
     </div>
   );
 
@@ -1760,7 +1779,7 @@ function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed
                   )}
                 </div>
                 <div style={{display:"flex",gap:16}}>
-                  {["white","black"].map(t=><div key={t} style={{flex:1}}><div style={{fontSize:10,color:C.muted,marginBottom:4}}>{t==="white"?"BIANCHI":"NERI"}</div>{(m[t]||[]).map(id=><div key={id} style={{fontSize:12,color:isExt(id)?C.muted:C.text,marginBottom:2}}>{getP(id)?.name||id}{m.goals?.[id]?<span style={{color:C.muted}}> · {m.goals[id]}⚽</span>:null}</div>)}</div>)}
+                  {["white","black"].map(t=><div key={t} style={{flex:1}}><div style={{fontSize:10,color:C.muted,marginBottom:4}}>{t==="white"?"BIANCHI":"NERI"}</div>{(m[t]||[]).map(id=><div key={id} style={{fontSize:12,color:isExt(id)?C.muted:C.text,marginBottom:2}}>{getP(id,m.ext||{})?.name||id}{isExt(id)&&<Stelle n={(getP(id,m.ext||{})||{}).stars} size={9}/>}{m.goals?.[id]?<span style={{color:C.muted}}> · {m.goals[id]}⚽</span>:null}</div>)}</div>)}
                   {m.mvp&&<div><div style={{fontSize:10,color:C.muted,marginBottom:4}}>MVP</div><div style={{fontSize:12,color:C.accent}}>⭐ {getP(m.mvp)?.name}</div></div>}
                 </div>
                 <div style={{fontSize:11,color:C.muted,marginTop:8}}>{new Date(m.date).toLocaleDateString("it-IT",{day:"2-digit",month:"short",year:"numeric"})}</div>
@@ -1830,14 +1849,16 @@ function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed
             const iW=white.includes(p.id),iB=black.includes(p.id);
             return(
               <div key={p.id} style={{display:"flex",alignItems:"center",gap:10,background:C.card,border:`1px solid ${iW||iB?C.accent+"35":C.border}`,borderRadius:10,padding:"10px 14px",marginBottom:8}}>
-                <Avatar player={p} size={36}/><span style={{flex:1,fontWeight:600,fontSize:14,color:C.text}}>{p.name}</span>
+                <Avatar player={p} size={36}/><span style={{flex:1,fontWeight:600,fontSize:14,color:C.text}}>{p.name}{p.ext&&<Stelle n={p.stars}/>}</span>
                 <div style={{display:"flex",gap:6}}>
                   {["white","black"].map(t=>{const active=t==="white"?iW:iB;return<button key={t} onClick={()=>assign(p.id,t)} style={{padding:"6px 14px",borderRadius:6,cursor:"pointer",fontWeight:700,fontSize:14,fontFamily:"'DM Sans',sans-serif",border:`2px solid ${active?C.accent:C.border}`,background:active?(t==="white"?"#ffffff18":"#33333344"):C.card2,color:active?C.accent:C.muted,transition:"all .15s"}}>{t==="white"?"⬜":"⬛"}</button>;})}
                 </div>
               </div>
             );
           })}
-          <Btn onClick={()=>setExtra(e=>e.concat("ext"+(e.length+1)))} variant="ghost" full small style={{marginTop:4}}>＋ Aggiungi un esterno</Btn>
+          <BloccoEsterni ids={extra} info={extInfo}
+            onAggiungi={info=>{const id="ext"+(extra.length+1);setExtra(e=>e.concat(id));setExtInfo(x=>Object.assign({},x,{[id]:info}));}}
+            onModifica={(id,info)=>setExtInfo(x=>Object.assign({},x,{[id]:info}))}/>
           <div style={{fontSize:11,color:C.muted,marginTop:8,lineHeight:1.5}}>Gli esterni riempiono i buchi per giocare: non entrano in classifica e non prendono statistiche.</div>
           <div style={{display:"flex",gap:8,marginTop:12}}>
             <Btn onClick={reset} variant="ghost" style={{flex:1}}>Annulla</Btn>
@@ -1892,7 +1913,7 @@ function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed
             <div style={{fontWeight:700,marginBottom:10,color:C.text,fontSize:14}}>⭐ MVP (opzionale)</div>
             <select value={mvp} onChange={e=>setMvp(e.target.value)} style={{width:"100%",background:C.card2,border:`1px solid ${C.border}`,color:C.text,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"'DM Sans',sans-serif"}}>
               <option value="">— Nessun MVP —</option>
-              {all.filter(id=>!isExt(id)).map(id=>{const p=getP(id);return p?<option key={id} value={id}>{p.name}</option>:null;})}
+              {all.filter(daMvp).map(id=>{const p=getP(id);return p?<option key={id} value={id}>{p.name}</option>:null;})}
             </select>
           </div>
           <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:16,marginBottom:16}}>
@@ -2195,7 +2216,78 @@ function rolesOf(standings,settings,matchIso){
 ═══════════════════════════════════════════════════════ */
 const isExt=id=>/^ext\d+$/.test(String(id||""));
 const extName=id=>"Esterno "+String(id).slice(3);
-const extPlayer=id=>({id,name:extName(id),ext:true});
+/* Un esterno può avere un nome e deve avere le stelle (da 1 a 5): servono
+   a chi fa le squadre per capire quanto è forte uno che non conosce.
+   Nome e stelle stanno accanto alla partita o alla selezione, sotto il suo
+   id ("ext1", "ext2"…): l'esterno non è nella rosa e non ha una scheda. */
+const extPlayer=(id,info)=>{
+  const x=(info&&typeof info==="object"&&info[id])||{};
+  return{id,name:x.name||extName(id),ext:true,stars:+x.stars||0};
+};
+/* Le stelle di un esterno, piccole, accanto al nome */
+function Stelle({n,size=11}){
+  if(!n)return null;
+  return(
+    <span aria-label={n+" stelle su 5"} style={{fontSize:size,color:C.accent,letterSpacing:1,marginLeft:5,whiteSpace:"nowrap"}}>
+      {"★".repeat(n)}<span style={{color:C.muted}}>{"☆".repeat(5-n)}</span>
+    </span>
+  );
+}
+/* Il modulo per un esterno: nome facoltativo, stelle obbligatorie. Senza
+   stelle non si salva, perché sono proprio quello che serve sapere. */
+function EsternoForm({iniziale,titolo,onSalva,onAnnulla}){
+  const [nome,setNome]=useState((iniziale&&iniziale.name)||"");
+  const [stelle,setStelle]=useState((iniziale&&+iniziale.stars)||0);
+  return(
+    <div style={{background:C.card,border:`1px solid ${C.accent}45`,borderRadius:12,padding:12,marginTop:8}}>
+      <div style={{fontSize:10,color:C.muted,fontWeight:800,letterSpacing:1,marginBottom:8}}>{titolo||"NUOVO ESTERNO"}</div>
+      <input placeholder="Nome (facoltativo)" value={nome} maxLength={30} onChange={e=>setNome(e.target.value)}
+        style={{width:"100%",background:C.card2,border:`1px solid ${C.border}`,color:C.text,borderRadius:8,padding:"9px 12px",
+                fontSize:14,fontFamily:"'DM Sans',sans-serif",marginBottom:10}}/>
+      <div style={{fontSize:11,color:C.muted,marginBottom:6}}>Quanto è forte? Da 1 a 5 stelle.</div>
+      <div style={{display:"flex",gap:6,marginBottom:12}}>
+        {[1,2,3,4,5].map(i=>(
+          <button key={i} onClick={()=>setStelle(i)} aria-label={i+(i===1?" stella":" stelle")}
+            style={{flex:1,height:40,borderRadius:8,cursor:"pointer",fontSize:20,lineHeight:1,
+                    border:`1px solid ${i<=stelle?C.accent:C.border}`,background:i<=stelle?C.accent+"18":C.card2,
+                    color:i<=stelle?C.accent:C.muted}}>{i<=stelle?"★":"☆"}</button>
+        ))}
+      </div>
+      <div style={{display:"flex",gap:8}}>
+        <Btn onClick={onAnnulla} variant="ghost" small style={{flex:1}}>Annulla</Btn>
+        <Btn onClick={()=>onSalva({name:nome.trim()||null,stars:stelle})} disabled={!stelle} small style={{flex:2}}>
+          {stelle?"Salva":"Scegli le stelle"}
+        </Btn>
+      </div>
+    </div>
+  );
+}
+/* Gli esterni già in campo, con le loro stelle, il tasto per correggerli
+   e quello per aggiungerne un altro. Uguale in selezione e in partita. */
+function BloccoEsterni({ids,info,onAggiungi,onModifica,testo}){
+  const [apri,setApri]=useState(null);   // null · "nuovo" · id dell'esterno da correggere
+  return(
+    <div style={{marginTop:8}}>
+      {(ids||[]).map(id=>{
+        const p=extPlayer(id,info);
+        return apri===id
+          ?<EsternoForm key={id} iniziale={(info||{})[id]} titolo={"CORREGGI "+p.name.toUpperCase()}
+             onAnnulla={()=>setApri(null)} onSalva={x=>{onModifica(id,x);setApri(null);}}/>
+          :<div key={id} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 2px"}}>
+             <span style={{fontSize:11,color:C.muted}}>Esterno</span>
+             <span style={{flex:1,fontSize:13,color:C.text,fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+               {p.name}{p.stars?<Stelle n={p.stars}/>:<span style={{fontSize:11,color:C.red,marginLeft:6}}>senza stelle</span>}
+             </span>
+             <button onClick={()=>setApri(id)} aria-label={"Correggi "+p.name}
+               style={{background:"none",border:`1px solid ${C.border}`,color:C.muted,borderRadius:6,padding:"3px 8px",cursor:"pointer",fontSize:12}}>✏️</button>
+           </div>;
+      })}
+      {apri==="nuovo"
+        ?<EsternoForm onAnnulla={()=>setApri(null)} onSalva={x=>{onAggiungi(x);setApri(null);}}/>
+        :<Btn onClick={()=>setApri("nuovo")} variant="ghost" full small style={{marginTop:6}}>{testo||"＋ Aggiungi un esterno"}</Btn>}
+    </div>
+  );
+}
 
 function TeamsSection({standings,classifica,eligible,teamSel,setSel,myPlayerId,isAdmin,capId,pickId,capManual,pickManual,decaduti,giro,onGiro,setSettings,availableIds,playAll,matchIso,matchLabel,onUseTeams,onAggiungi}){
   const [scegli,setScegli]=useState(false);
@@ -2206,7 +2298,8 @@ function TeamsSection({standings,classifica,eligible,teamSel,setSel,myPlayerId,i
   const hasCap=standings.length>=2&&capId&&pickId;
   const captain=hasCap?standings.find(p=>p.id===capId):null;
   const picker=hasCap?standings.find(p=>p.id===pickId):null;
-  const byId=id=>standings.find(p=>p.id===id)||(isExt(id)?extPlayer(id):{id,name:"?"});
+  const extInfo=(teamSel&&teamSel.extInfo)||{};
+  const byId=id=>standings.find(p=>p.id===id)||(isExt(id)?extPlayer(id,extInfo):{id,name:"?"});
 
   const phase=teamSel?.phase||"idle";
   const metodo=teamSel?.method||"cava";
@@ -2253,14 +2346,16 @@ function TeamsSection({standings,classifica,eligible,teamSel,setSel,myPlayerId,i
             capId,pickId,   // congelati: da qui in poi non si muovono più
             assign:{},picks:[],captainSide:null,finalWhite:null,finalBlack:null});
   };
-  const reset=()=>setSel({phase:"idle",method:metodo,assign:{},picks:[],pool:[],ext:0,
+  const reset=()=>setSel({phase:"idle",method:metodo,assign:{},picks:[],pool:[],ext:0,extInfo:{},
                           capId:null,pickId:null,
                           captainSide:null,finalWhite:null,finalBlack:null});
-  const aggiungiEsterno=()=>{
-    const n=extN+1;
-    if(phase==="idle")setSel({ext:n});
-    else setSel({ext:n,pool:(pool||[]).concat("ext"+n)});
+  const aggiungiEsterno=info=>{
+    const n=extN+1, id="ext"+n, ei=Object.assign({},extInfo,{[id]:info});
+    if(phase==="idle")setSel({ext:n,extInfo:ei});
+    else setSel({ext:n,extInfo:ei,pool:(pool||[]).concat(id)});
   };
+  const correggiEsterno=(id,info)=>setSel({extInfo:Object.assign({},extInfo,{[id]:info})});
+  const extIds=Array.from({length:extN},(_,i)=>"ext"+(i+1));
 
   /* ─── cava ─── */
   const altri=pool.filter(id=>id!==capId&&id!==pickId);
@@ -2305,11 +2400,11 @@ function TeamsSection({standings,classifica,eligible,teamSel,setSel,myPlayerId,i
     if(lato==="white")w.push(id); else if(lato==="black")b.push(id);
     setSel({finalWhite:w,finalBlack:b});
   };
-  const esternoInSquadra=()=>{
+  const esternoInSquadra=info=>{
     const n=extN+1, id="ext"+n;
     const w=fW.slice(), b=fB.slice();
     (w.length<=b.length?w:b).push(id);
-    setSel({ext:n,pool:(pool||[]).concat(id),finalWhite:w,finalBlack:b});
+    setSel({ext:n,extInfo:Object.assign({},extInfo,{[id]:info}),pool:(pool||[]).concat(id),finalWhite:w,finalBlack:b});
   };
   const fuoriPartita=standings.filter(p=>fW.indexOf(p.id)<0&&fB.indexOf(p.id)<0);
 
@@ -2329,11 +2424,11 @@ function TeamsSection({standings,classifica,eligible,teamSel,setSel,myPlayerId,i
       {ids.map(id=>{const p=byId(id);return(
         <div key={id} style={{display:"flex",alignItems:"center",gap:7,marginBottom:6,opacity:p.ext?.65:1}}>
           <Avatar player={p} size={24}/>
-          <span style={{fontSize:12,color:myPlayerId===id?C.accent:C.text,fontWeight:myPlayerId===id?800:400,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{p.name}</span>
+          <span style={{fontSize:12,color:myPlayerId===id?C.accent:C.text,fontWeight:myPlayerId===id?800:400,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{p.name}{p.ext&&<Stelle n={p.stars} size={10}/>}</span>
         </div>);})}
     </div>
   );
-  const BtnEsterno=<Btn onClick={aggiungiEsterno} variant="ghost" full small style={{marginTop:8}}>＋ Aggiungi un esterno</Btn>;
+  const BtnEsterno=<BloccoEsterni ids={extIds} info={extInfo} onAggiungi={aggiungiEsterno} onModifica={correggiEsterno}/>;
 
   /* Il bivio fra i due metodi sta nella schermata di preparazione: con una
      selezione già avviata non lo si vedeva più, e chi voleva cambiare non
@@ -2543,7 +2638,7 @@ function TeamsSection({standings,classifica,eligible,teamSel,setSel,myPlayerId,i
             return(
               <div key={id} style={{display:"flex",alignItems:"center",gap:10,background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 14px",marginBottom:8}}>
                 <Avatar player={p} size={34}/>
-                <span style={{flex:1,fontWeight:600,fontSize:14,color:C.text,opacity:p.ext?.7:1}}>{p.name}</span>
+                <span style={{flex:1,fontWeight:600,fontSize:14,color:C.text,opacity:p.ext?.7:1}}>{p.name}{p.ext&&<Stelle n={p.stars}/>}</span>
                 <div style={{display:"flex",gap:6}}>
                   {["white","black"].map(t=>(
                     <button key={t} disabled={!ioPicker} onClick={()=>ioPicker&&toggleAssign(id,t)}
@@ -2594,7 +2689,7 @@ function TeamsSection({standings,classifica,eligible,teamSel,setSel,myPlayerId,i
               <button key={id} onClick={()=>ioChiamo&&chiama(id)} disabled={!ioChiamo}
                 style={{width:"100%",display:"flex",alignItems:"center",gap:10,background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 14px",marginBottom:8,cursor:ioChiamo?"pointer":"default",opacity:ioChiamo?1:.55,fontFamily:"'DM Sans',sans-serif"}}>
                 <Avatar player={p} size={34}/>
-                <span style={{flex:1,textAlign:"left",fontWeight:600,fontSize:14,color:C.text,opacity:p.ext?.7:1}}>{p.name}</span>
+                <span style={{flex:1,textAlign:"left",fontWeight:600,fontSize:14,color:C.text,opacity:p.ext?.7:1}}>{p.name}{p.ext&&<Stelle n={p.stars}/>}</span>
                 {ioChiamo&&<span style={{fontSize:12,color:turno==="A"?C.red:C.accent,fontWeight:800}}>CHIAMA →</span>}
               </button>
             );
@@ -2625,7 +2720,7 @@ function TeamsSection({standings,classifica,eligible,teamSel,setSel,myPlayerId,i
                   <div style={{fontWeight:800,marginBottom:10,fontSize:14,color:C.text}}>{t==="white"?"⬜ BIANCHI":"⬛ NERI"}</div>
                   {team.map(id=>{const p=byId(id);return(
                     <div key={id} style={{display:"flex",alignItems:"center",gap:6,marginBottom:6,opacity:p.ext?.65:1}}>
-                      <Avatar player={p} size={22}/><span style={{fontSize:12,color:C.text}}>{p.name}</span>
+                      <Avatar player={p} size={22}/><span style={{fontSize:12,color:C.text}}>{p.name}{p.ext&&<Stelle n={p.stars} size={10}/>}</span>
                     </div>);})}
                   <div style={{borderTop:`1px solid ${C.border}`,marginTop:8,paddingTop:8}}>
                     <div style={{fontSize:11,color:C.accent,fontStyle:"italic"}}>+ {captain.name}</div>
@@ -2662,7 +2757,7 @@ function TeamsSection({standings,classifica,eligible,teamSel,setSel,myPlayerId,i
                     {ids.map(id=>{const p=byId(id);return(
                       <div key={id} style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,opacity:p.ext?.65:1}}>
                         <Avatar player={p} size={30}/>
-                        <span style={{fontSize:13,color:myPlayerId===id?C.accent:C.text,fontWeight:(id===capId||myPlayerId===id)?800:400}}>{p.name}{id===capId?" ★":""}</span>
+                        <span style={{fontSize:13,color:myPlayerId===id?C.accent:C.text,fontWeight:(id===capId||myPlayerId===id)?800:400}}>{p.name}{id===capId?" ★":""}{p.ext&&<Stelle n={p.stars} size={10}/>}</span>
                       </div>);})}
                   </div>
                 ))}
@@ -2670,7 +2765,7 @@ function TeamsSection({standings,classifica,eligible,teamSel,setSel,myPlayerId,i
               <Btn onClick={()=>setModifica(true)} variant="ghost" full small style={{marginBottom:10}}>✏️ Sposta, togli o aggiungi giocatori</Btn>
               {onUseTeams&&(
                 <>
-                  <Btn onClick={()=>onUseTeams(fW,fB)} disabled={!fW.length||!fB.length} full style={{marginBottom:fW.length&&fB.length?8:4}}>Registra la partita con queste squadre →</Btn>
+                  <Btn onClick={()=>onUseTeams(fW,fB,extInfo)} disabled={!fW.length||!fB.length} full style={{marginBottom:fW.length&&fB.length?8:4}}>Registra la partita con queste squadre →</Btn>
                   {(!fW.length||!fB.length)&&<div style={{fontSize:11,color:C.muted,textAlign:"center",marginBottom:8}}>Una delle due squadre è vuota.</div>}
                 </>
               )}
@@ -2686,7 +2781,7 @@ function TeamsSection({standings,classifica,eligible,teamSel,setSel,myPlayerId,i
                 return(
                   <div key={id} style={{display:"flex",alignItems:"center",gap:9,background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"9px 12px",marginBottom:6}}>
                     <Avatar player={p} size={30}/>
-                    <span style={{flex:1,fontSize:13,fontWeight:600,color:C.text,opacity:p.ext?.7:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{p.name}{id===capId?" ★":""}</span>
+                    <span style={{flex:1,fontSize:13,fontWeight:600,color:C.text,opacity:p.ext?.7:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{p.name}{id===capId?" ★":""}{p.ext&&<Stelle n={p.stars} size={10}/>}</span>
                     <div style={{display:"flex",gap:5}}>
                       {["white","black"].map(t=>(
                         <button key={t} onClick={()=>spostaIn(id,t)}
@@ -2701,7 +2796,7 @@ function TeamsSection({standings,classifica,eligible,teamSel,setSel,myPlayerId,i
                   </div>
                 );
               })}
-              <Btn onClick={esternoInSquadra} variant="ghost" full small style={{marginTop:6}}>＋ Aggiungi un esterno</Btn>
+              <BloccoEsterni ids={extIds} info={extInfo} onAggiungi={esternoInSquadra} onModifica={correggiEsterno}/>
               {fuoriPartita.length>0&&(
                 <div style={{marginTop:12}}>
                   <div style={{fontSize:10,color:C.muted,letterSpacing:1,fontWeight:800,marginBottom:8}}>FUORI DALLA PARTITA ({fuoriPartita.length})</div>
@@ -3494,7 +3589,7 @@ function CialtronApp(){
   const restantiN=selFase==="draft"?((teamSel.pool||[]).length-selPicks.length-2):0;
   const chiedeCiSei=!!myPlayerId&&!rispostaMia&&players.length>0&&avvisoAperto(board.settings);
 
-  const usaSquadre=useCallback((w,b)=>{setPrefill({white:w,black:b});setTab("match");say("Squadre portate nella registrazione");},[say]);
+  const usaSquadre=useCallback((w,b,ei)=>{setPrefill({white:w,black:b,extInfo:ei||{}});setTab("match");say("Squadre portate nella registrazione");},[say]);
   const prefillUsato=useCallback(()=>setPrefill(null),[]);
 
   if(!cfg)return <ConfigScreen pendingInvite={invite} onCfg={(c,code)=>{setCfg(c);setSb(makeClient(c));if(code)setInvite(code);}}/>;
@@ -3598,7 +3693,7 @@ function CialtronApp(){
                               setCallup={(pid,v)=>setCallup(pid,v,matchIso)} setSettings={setSettings}/>}
         {tab==="match"    &&<MatchSection players={playersView} matches={matches} isAdmin={isAdmin} saveMatches={saveMatches}
                               golVivo={golVivo} togliGolVivo={togliGolVivo} azzeraGolVivo={azzeraGolVivo}
-                              squadreFatte={teamSel&&teamSel.phase==="done"?{white:teamSel.finalWhite||[],black:teamSel.finalBlack||[]}:null}
+                              squadreFatte={teamSel&&teamSel.phase==="done"?{white:teamSel.finalWhite||[],black:teamSel.finalBlack||[],extInfo:teamSel.extInfo||{}}:null}
                               prefill={prefill} onPrefillUsed={prefillUsato}/>}
         {tab==="teams"    &&<TeamsSection standings={standings} classifica={classifica} teamSel={teamSel} setSel={setSel} myPlayerId={myPlayerId} isAdmin={isAdmin}
                               capId={capId} pickId={pickId} capManual={capManual} pickManual={pickManual} setSettings={setSettings}

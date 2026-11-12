@@ -149,6 +149,13 @@
       if(!io)return ko("non sei collegato a un giocatore della rosa");
       const gioca=id=>(part.white||[]).indexOf(id)>=0||(part.black||[]).indexOf(id)>=0;
       if(!gioca(io))return ko("si vota solo per chi ha giocato questa partita");
+      /* esterni e visitatori: giocano, ma l'MVP non lo votano e non lo prendono */
+      const g=rows(d,"groups").find(x=>x.id===a.p_group);
+      const ospite=id=>/^ext\d+$/.test(String(id||""))||
+        !!(((g&&g.data&&g.data.players)||[]).find(x=>x.id===id)||{}).visitor;
+      if((a.p_round==="r1"||a.p_round==="r2")&&ospite(io))return ko("esterni e visitatori non votano l'MVP");
+      if(a.p_round==="r1"&&(ospite(a.p_a)||ospite(a.p_b)))return ko("esterni e visitatori non si possono votare");
+      if(a.p_round==="r2"&&ospite(a.p_a))return ko("esterni e visitatori non si possono votare");
       let b=rows(d,"board").find(x=>x.group_id===a.p_group);
       if(!b){b={group_id:a.p_group,settings:{},callups:{},votes:{}};rows(d,"board").push(b);}
       const cur=Object.assign({},b.votes||{});
