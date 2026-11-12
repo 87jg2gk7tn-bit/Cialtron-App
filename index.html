@@ -56,7 +56,7 @@ const C={accent:"#B8FF00",bg:"#090909",card:"#111",card2:"#1A1A1A",card3:"#222",
 /* Versione pubblicata: confrontata con version.json per avvisare che c'è
    un aggiornamento. Sul telefono la pagina resta in cache, senza questo
    controllo le modifiche non arriverebbero finché non si svuota la cache. */
-const APP_VERSION="2026-11-12.2";
+const APP_VERSION="2026-11-12.3";
 
 function useUpdateCheck(){
   const [next,setNext]=useState(null);
@@ -2277,8 +2277,8 @@ function EsternoForm({iniziale,titolo,onSalva,onAnnulla,onElimina}){
 }
 /* Gli esterni già in campo, con le loro stelle, il tasto per correggerli
    e quello per aggiungerne un altro. Uguale in selezione e in partita. */
-/* onElimina c'è solo dove togliere un esterno non rompe niente: in
-   preparazione, a squadre fatte e in registrazione. A chiamata in corso no. */
+/* onElimina: togliere un esterno si può sempre, anche a chiamata in
+   corso — chi sistema le cose lo fa da dove si trova. */
 function BloccoEsterni({ids,info,onAggiungi,onModifica,onElimina,testo}){
   const [apri,setApri]=useState(null);   // null · "nuovo" · id dell'esterno da correggere
   return(
@@ -2383,9 +2383,22 @@ function TeamsSection({standings,classifica,eligible,teamSel,setSel,myPlayerId,i
     const ei=Object.assign({},extInfo); delete ei[id];
     const a=Object.assign({},assign); delete a[id];
     const via=l=>Array.isArray(l)?l.filter(x=>x!==id):l;
-    setSel({ext:lista.length,extList:lista,extInfo:ei,assign:a,pool:via(pool),
-            picks:(picks||[]).filter(x=>x.id!==id),
-            finalWhite:via(teamSel&&teamSel.finalWhite),finalBlack:via(teamSel&&teamSel.finalBlack)});
+    const nuovoPool=via(pool)||[], nuovePicks=(picks||[]).filter(x=>x.id!==id);
+    const patch={ext:lista.length,extList:lista,extInfo:ei,assign:a,pool:nuovoPool,picks:nuovePicks,
+                 finalWhite:via(teamSel&&teamSel.finalWhite),finalBlack:via(teamSel&&teamSel.finalBlack)};
+    /* Chiamata alternata: se l'esterno era l'ultimo ancora da chiamare,
+       togliendolo non resta nessuno e la chiamata è finita. Senza questo
+       la schermata resterebbe ad aspettare un turno che non arriva più. */
+    if(phase==="draft"){
+      const A=[pickId].concat(nuovePicks.filter(x=>x.t==="A").map(x=>x.id));
+      const B=[capId].concat(nuovePicks.filter(x=>x.t==="B").map(x=>x.id));
+      const rimasti=nuovoPool.filter(x=>A.concat(B).indexOf(x)<0);
+      if(!rimasti.length){
+        onGiro&&onGiro([capId,pickId]);
+        Object.assign(patch,{phase:"done",captainSide:null,finalWhite:A,finalBlack:B});
+      }
+    }
+    setSel(patch);
   };
 
   /* ─── cava ─── */
@@ -2460,7 +2473,7 @@ function TeamsSection({standings,classifica,eligible,teamSel,setSel,myPlayerId,i
     </div>
   );
   const BtnEsterno=<BloccoEsterni ids={extIds} info={extInfo} onAggiungi={aggiungiEsterno} onModifica={correggiEsterno}
-                                  onElimina={phase==="idle"?eliminaEsterno:null}/>;
+                                  onElimina={eliminaEsterno}/>;
 
   /* Il bivio fra i due metodi sta nella schermata di preparazione: con una
      selezione già avviata non lo si vedeva più, e chi voleva cambiare non

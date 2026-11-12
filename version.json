@@ -1,4 +1,4 @@
 {
-  "version": "2026-11-12.2",
-  "note": "Gli esterni si possono eliminare"
+  "version": "2026-11-12.3",
+  "note": "L'esterno si elimina anche a chiamata in corso"
 }

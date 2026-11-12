@@ -31,4 +31,5 @@ parte più.
 - `test-voto-altri.js` — il voto MVP registrato per conto di un altro.
 - `test-visitatore.js` — il visitatore gioca ma resta fuori da classifica e giro.
 - `test-esterni.js` — esterni con nome e stelle; esterni e visitatori fuori dall'MVP.
+- `test-esterni-chiamata.js` — eliminare un esterno a chiamata in corso.
 - `shot-voto.js`, `shot-visitatore.js`, `shot-esterni.js` — fanno la foto della pagina, per guardarla davvero.
