@@ -84,23 +84,63 @@ const check=(n,v,x="")=>{(v?ok:ko).push(n);console.log((v?"  ✓ ":"  ✗ ")+n+(
   t=await T();
   check("a squadre fatte le stelle restano", /Marco[^\n]*★/.test(t)&&/Dario[^\n]*★/.test(t), t.slice(0,900));
 
+  console.log("\n— ELIMINARE UN ESTERNO DALLA MODIFICA —");
+  await p.locator("main button",{hasText:"Sposta, togli o aggiungi giocatori"}).click(); await w(500);
+  await p.locator("main button",{hasText:"＋ Aggiungi un esterno"}).first().click(); await w(300);
+  await p.getByPlaceholder("Nome (facoltativo)").fill("Ezio");
+  await stelle(1);
+  await p.locator("main button",{hasText:/^Salva$/}).first().click(); await w(800);
+  sel=(await db()).selections[0].state;
+  check("aggiungo Ezio a squadre fatte", (sel.extList||[]).length===3&&sel.extInfo.ext3&&sel.extInfo.ext3.name==="Ezio", JSON.stringify({l:sel.extList,i:sel.extInfo}));
+  // dalla matita: nel modulo c'è il tasto per eliminarlo
+  await p.locator("main button[aria-label='Correggi Ezio']").click(); await w(300);
+  check("nel modulo di correzione c'è 'Elimina questo esterno'", await p.locator("main button",{hasText:"Elimina questo esterno"}).count()===1, "");
+  await p.locator("main button",{hasText:"Elimina questo esterno"}).click(); await w(900);
+  sel=(await db()).selections[0].state;
+  const inSq=(sel.finalWhite||[]).concat(sel.finalBlack||[]);
+  check("Ezio sparisce dall'elenco degli esterni", JSON.stringify(sel.extList)===JSON.stringify(["ext1","ext2"]), JSON.stringify(sel.extList));
+  check("e dalle squadre", inSq.indexOf("ext3")<0, JSON.stringify(inSq));
+  check("e dalle stelle salvate", !sel.extInfo.ext3, JSON.stringify(sel.extInfo));
+  check("e dalla pagina", !/Ezio/.test(await T()), "");
+  // dalla riga in squadra: il cestino lo elimina subito
+  check("sulla riga dell'esterno c'è il cestino, non la ✕", await p.locator("main button[aria-label='Elimina Dario']").count()===1, "");
+  await p.locator("main button[aria-label='Elimina Dario']").click(); await w(900);
+  sel=(await db()).selections[0].state;
+  const inSq2=(sel.finalWhite||[]).concat(sel.finalBlack||[]);
+  check("il cestino toglie Dario da tutto", JSON.stringify(sel.extList)===JSON.stringify(["ext1"])&&inSq2.indexOf("ext2")<0&&!sel.extInfo.ext2, JSON.stringify({l:sel.extList,sq:inSq2,i:sel.extInfo}));
+  check("Marco invece resta com'era", sel.extInfo.ext1&&sel.extInfo.ext1.name==="Marco"&&inSq2.indexOf("ext1")>=0, JSON.stringify(sel.extInfo));
+  const giocatoriPrima=inSq2.filter(x=>!/^ext/.test(x)).length;
+  check("i giocatori della rosa non si toccano", giocatoriPrima===5, giocatoriPrima);
+  // uno nuovo dopo l'eliminazione: un id libero, nessun doppione
+  await p.locator("main button",{hasText:"＋ Aggiungi un esterno"}).first().click(); await w(300);
+  await p.getByPlaceholder("Nome (facoltativo)").fill("Fabio");
+  await stelle(2);
+  await p.locator("main button",{hasText:/^Salva$/}).first().click(); await w(800);
+  sel=(await db()).selections[0].state;
+  const inSq3=(sel.finalWhite||[]).concat(sel.finalBlack||[]);
+  check("un esterno nuovo prende un posto libero, senza doppioni",
+        new Set(sel.extList).size===sel.extList.length&&sel.extList.length===2&&inSq3.filter(x=>/^ext/.test(x)).length===2,
+        JSON.stringify({l:sel.extList,sq:inSq3}));
+  check("e porta con sé il suo nome", Object.values(sel.extInfo).some(x=>x.name==="Fabio"), JSON.stringify(sel.extInfo));
+  await p.locator("main button",{hasText:/^Fatto$/}).click(); await w(500);
+
   console.log("\n— DALLA SELEZIONE ALLA PARTITA —");
   await p.locator("main button",{hasText:"Registra la partita con queste squadre"}).click(); await w(900);
   t=await T();
-  check("in registrazione gli esterni hanno il loro nome", /Marco/.test(t)&&/Dario/.test(t), t.slice(0,700));
+  check("in registrazione gli esterni hanno il loro nome", /Marco/.test(t)&&/Fabio/.test(t)&&!/Dario|Ezio/.test(t), t.slice(0,700));
   // risultato e avanti
   const num=p.locator("main input[type=number]");
   await num.nth(0).fill("5"); await num.nth(1).fill("3"); await w(300);
   await p.locator("main button",{hasText:"Avanti →"}).first().click(); await w(600);
   t=await T();
   const opz=await p.locator("main select option").allInnerTexts();
-  check("nell'MVP a mano non ci sono esterni né visitatori", opz.indexOf("Marco")<0&&opz.indexOf("Dario")<0&&opz.indexOf("Gianni")<0&&opz.length>1, JSON.stringify(opz));
-  check("ma fra i marcatori gli esterni ci sono, col nome", /Marco/.test(t)&&/Dario/.test(t), t.slice(t.indexOf("Chi ha segnato"),t.indexOf("Chi ha segnato")+500));
+  check("nell'MVP a mano non ci sono esterni né visitatori", opz.indexOf("Marco")<0&&opz.indexOf("Fabio")<0&&opz.indexOf("Gianni")<0&&opz.length>1, JSON.stringify(opz));
+  check("ma fra i marcatori gli esterni ci sono, col nome", /Marco/.test(t)&&/Fabio/.test(t), t.slice(t.indexOf("Chi ha segnato"),t.indexOf("Chi ha segnato")+500));
   await p.locator("main button",{hasText:"Salva partita ✓"}).click(); await w(700);
   check("prima di salvare chiede se sei sicuro", /SEI SICURO\?/.test(await p.locator("body").innerText()), "");
   await p.getByRole("button",{name:"Sì, salva"}).click(); await w(1300);
   const m=((await db()).groups[0].data.matches||[])[0]||{};
-  check("la partita salva nome e stelle degli esterni", m.ext&&m.ext.ext1&&m.ext.ext1.name==="Marco"&&m.ext.ext1.stars===4&&m.ext.ext2.name==="Dario", JSON.stringify(m.ext));
+  check("la partita salva nome e stelle degli esterni", m.ext&&m.ext.ext1&&m.ext.ext1.name==="Marco"&&m.ext.ext1.stars===4&&Object.values(m.ext).some(x=>x.name==="Fabio")&&Object.keys(m.ext).length===2, JSON.stringify(m.ext));
   t=await T();
   check("nello storico si legge 'Marco' con le stelle, non 'Esterno 1'", /Marco\s*★★★★☆/.test(t)&&!/Esterno 1/.test(t), t.slice(0,900));
 
@@ -111,9 +151,9 @@ const check=(n,v,x="")=>{(v?ok:ko).push(n);console.log((v?"  ✓ ":"  ✗ ")+n+(
   const voto=t.slice(t.indexOf("VOTA L'MVP"),t.indexOf("Hanno votato"));
   check("c'è il voto della partita", /VOTA L'MVP/.test(t), t.slice(0,400));
   check("fra i votabili non c'è il visitatore", !/Gianni/.test(voto), voto.slice(0,700));
-  check("né gli esterni", !/Marco|Dario|Esterno/.test(voto.replace(/Esterni e visitatori/,"")), voto.slice(0,700));
+  check("né gli esterni", !/Marco|Fabio|Esterno/.test(voto.replace(/Esterni e visitatori/,"")), voto.slice(0,700));
   const opzVoto=await p.locator("main select").first().locator("option").allInnerTexts();
-  check("nella tendina di chi vota non ci sono né visitatori né esterni", !opzVoto.some(x=>/Gianni|Marco|Dario/.test(x)), JSON.stringify(opzVoto));
+  check("nella tendina di chi vota non ci sono né visitatori né esterni", !opzVoto.some(x=>/Gianni|Marco|Fabio/.test(x)), JSON.stringify(opzVoto));
   check("l'app lo dice", /Esterni e visitatori non votano e non si votano/.test(t), voto.slice(0,300));
   const tot=t.match(/Hanno votato\s*(\d+)\s*su\s*(\d+)/);
   const giocanti=((m.white||[]).concat(m.black||[])).filter(id=>!/^ext/.test(id)).length-1; // meno Gianni
@@ -129,6 +169,25 @@ const check=(n,v,x="")=>{(v?ok:ko).push(n);console.log((v?"  ✓ ":"  ✗ ")+n+(
   await p.locator("main button",{hasText:/^Salva$/}).first().click(); await w(500);
   t=await T();
   check("l'esterno entra fra chi si assegna, col nome e le stelle", /Ugo\s*★★★★★/.test(t), t.slice(0,700));
+  await p.locator("main button",{hasText:"＋ Aggiungi un esterno"}).click(); await w(300);
+  await p.getByPlaceholder("Nome (facoltativo)").fill("Vito");
+  await stelle(3);
+  await p.locator("main button",{hasText:/^Salva$/}).first().click(); await w(400);
+  // Ugo nella squadra dei bianchi, poi lo elimino
+  await p.evaluate(()=>{const r=[...document.querySelectorAll("main div")].find(d=>/^Ugo/.test((d.querySelector("span")||{}).textContent||"")&&d.querySelectorAll("button").length===2);
+    r&&r.querySelectorAll("button")[0].click();}); await w(300);
+  check("prima di eliminarlo Ugo è fra i bianchi (1 vs 0)", /·\s*1\s*vs\s*0/.test(await T()), (await T()).slice(0,200));
+  await p.locator("main button[aria-label='Correggi Ugo']").click(); await w(300);
+  await p.locator("main button",{hasText:"Elimina questo esterno"}).click(); await w(500);
+  t=await T();
+  check("in Partite Ugo si elimina", !/Ugo/.test(t)&&/Vito/.test(t), t.slice(0,800));
+  check("e non resta contato fra i bianchi", /·\s*0\s*vs\s*0/.test(t), t.slice(0,200));
+  await p.locator("main button",{hasText:"＋ Aggiungi un esterno"}).click(); await w(300);
+  await p.getByPlaceholder("Nome (facoltativo)").fill("Zeno");
+  await stelle(1);
+  await p.locator("main button",{hasText:/^Salva$/}).first().click(); await w(400);
+  t=await T();
+  check("uno nuovo dopo l'eliminazione non pesta Vito", /Vito\s*★★★☆☆/.test(t)&&/Zeno\s*★☆☆☆☆/.test(t), t.slice(0,900));
   await p.locator("main button",{hasText:"Annulla"}).first().click(); await w(400);
 
   console.log("\n— ERRORI JS —");
