@@ -103,8 +103,8 @@ const check=(n,v,x="")=>{(v?ok:ko).push(n);console.log((v?"  ✓ ":"  ✗ ")+n+(
     check(n+" 🎖️ "+x, await capiDi(n)===x, await capiDi(n));
   await tab("SQUADRE");
   t=await T();
-  const g=t.slice(t.indexOf("GIRO DEI CAPITANI"),t.indexOf("GIRO DEI CAPITANI")+400);
-  check("il giro: fatto da 6 su 7, tocca ad Ale (il suo vecchio segno da una prova non conta)", /giro fatto da\s*6 su 7/.test(g)&&/Tocca a:\s*Ale/.test(g), g);
+  const g=t.slice(t.indexOf("Perché loro."),t.indexOf("Perché loro.")+400);
+  check("tocca ad Ale, l'unico a zero (il suo vecchio segno da una prova non conta)", /Ale è l'unico fra chi gioca ad averlo fatto mai/.test(g), g);
   check("e Ale ha un ruolo alla prossima", /(CAPITANO|FORMATORE)[\s\S]{0,40}Ale/.test(t), t.slice(t.indexOf("🏆"),t.indexOf("🏆")+160));
 
   console.log("\n— ERRORI JS —");

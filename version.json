@@ -1,4 +1,4 @@
 {
-  "version": "2026-11-17.4",
-  "note": "Giro: i vecchi segni non contano più, e l'app dice perché ha scelto quei due"
+  "version": "2026-11-17.5",
+  "note": "Via la scheda del giro; contano solo le partite registrate"
 }

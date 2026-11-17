@@ -27,7 +27,7 @@ const check=(n,v,x="")=>{(v?ok:ko).push(n);console.log((v?"  ✓ ":"  ✗ ")+n+(
     r.sort((a,b)=>a.innerText.length-b.innerText.length);
     const m=r[0]&&r[0].innerText.match(/🎖️\s*(\d+)/); return m?+m[1]:null;},n);
   const sett=async()=>(await db()).board[0].settings||{};
-  const giroCard=async()=>{const t=await T();const i=t.indexOf("GIRO DEI CAPITANI");return i<0?"(nessuna scheda del giro)":t.slice(i,i+520);};
+  const perche=async()=>{const t=await T();const i=t.indexOf("Perché loro.");return i<0?"(nessun perché)":t.slice(i,t.indexOf("\n\n",i)>0?Math.min(t.indexOf("Scegli capitano",i)>0?t.indexOf("Scegli capitano",i):i+500,i+500):i+500);};
   const daCapo=async()=>{
     await tab("SQUADRE");
     const r=p.locator("main button",{hasText:"Rifai da capo la selezione"});
@@ -101,9 +101,9 @@ const check=(n,v,x="")=>{(v?ok:ko).push(n);console.log((v?"  ✓ ":"  ✗ ")+n+(
   await tab("SQUADRE");
   let r=await chi();
   check("formatore il primo (Perro), capitano l'ultimo (Fo)", r.form==="Perro"&&r.cap==="Fo", JSON.stringify(r));
-  let g=await giroCard();
-  check("giro N° 1, tocca a chi non l'ha mai fatto", /N° 1/.test(g)&&/non l'ha mai fatto/.test(g), g);
-  check("giro fatto da 0 su 6, circa 3 partite", /giro fatto da\s*0 su 6/.test(g)&&/circa\s*3\s*partite/.test(g), g);
+  check("la scheda del giro non c'è più (tolta su richiesta)", !/GIRO DEI CAPITANI/.test(await T()), "");
+  let g=await perche();
+  check("il perché: tocca a chi non l'ha mai fatto, primo Perro e ultimo Fo", /\(mai\)/.test(g)&&/Perro è il primo in classifica e Fo l'ultimo/.test(g), g);
 
   console.log("\n— UNA SELEZIONE NON CONTA, LA PARTITA SÌ —");
   await faiSquadre();
@@ -139,9 +139,9 @@ const check=(n,v,x="")=>{(v?ok:ko).push(n);console.log((v?"  ✓ ":"  ✗ ")+n+(
   check("e l'altro ruolo va a chi è a una volta (Fo, l'ultimo)", (r.form==="Ale"&&r.cap==="Fo")||(r.cap==="Ale"&&r.form==="Perro"), JSON.stringify(r));
   await partita("Ale",r.form==="Ale"?r.cap:r.form);
   await daCapo();
-  g=await giroCard();
-  check("il giro va avanti senza di lui: N° 2", /N° 2/.test(g)&&/l'ha fatto\s*1 volta/.test(g), g);
-  check("e Gianni compare come indietro", /Indietro:\s*Gianni \(mai\)/.test(g)&&/tocca a lui per primo/.test(g), g);
+  g=await perche();
+  check("il giro va avanti senza di lui: tocca a chi l'ha fatto 1 volta", /\(1 volta\)/.test(g), g);
+  check("e Gianni, assente, non è fra quelli a cui tocca", !/Gianni/.test(g), g);
   r=await chi();
   check("i presenti ripartono fra chi l'ha fatto una volta", r.form&&r.cap&&r.form!=="Gianni"&&r.cap!=="Gianni", JSON.stringify(r));
   const v2=await p.evaluate(()=>{const d=window.__fakedb();const c={};(d.groups[0].data.matches||[]).forEach(m=>[m.formatore,m.capitano].forEach(x=>{if(x)c[x]=(c[x]||0)+1;}));return c;});
@@ -152,9 +152,8 @@ const check=(n,v,x="")=>{(v?ok:ko).push(n);console.log((v?"  ✓ ":"  ✗ ")+n+(
   await daCapo();
   r=await chi();
   check("Gianni torna: non l'ha mai fatto, tocca a lui", r.form==="Gianni"||r.cap==="Gianni", JSON.stringify(r));
-  g=await giroCard();
-  check("il giro torna a N° 1 finché lui non l'ha fatto", /N° 1/.test(g)&&/Tocca a:\s*Gianni/.test(g), g);
-  check("e non è più 'indietro': è il suo turno", !/Indietro:/.test(g), g);
+  g=await perche();
+  check("e il perché lo dice: è l'unico fra chi gioca a non averlo mai fatto", /Gianni è l'unico fra chi gioca ad averlo fatto mai/.test(g), g);
 
   console.log("\n— LA SCELTA A MANO NON SCAVALCA IL TURNO —");
   await p.locator("main button",{hasText:/capitano e formatore (a mano|scelti a mano)/i}).first().click(); await w(400);
@@ -172,18 +171,16 @@ const check=(n,v,x="")=>{(v?ok:ko).push(n);console.log((v?"  ✓ ":"  ✗ ")+n+(
   check("Perro 🎖️ 1", await capiDi("Perro")===1, await capiDi("Perro"));
   check("Gianni 🎖️ 0", await capiDi("Gianni")===0, await capiDi("Gianni"));
 
-  console.log("\n— AZZERA —");
+  console.log("\n— LE VOLTE SEGNATE A MANO NON CONTANO PIÙ —");
+  /* un segno a mano rimasto da prima (es. Gianni): senza la scheda non si
+     vedrebbe, quindi non deve spostare niente */
+  await p.evaluate(async gid=>{
+    const d=window.__fakedb(), b=d.board[0];
+    window.__asOther("board",{group_id:b.group_id},{settings:Object.assign({},b.settings,{ruoliIso:null,captainId:null,pickerId:null,giroAMano:[gid],giroFatti:[gid]})});
+  },await id("Gianni")); await w(900);
   await daCapo();
-  await p.locator("main button",{hasText:"Sistema"}).first().click(); await w(400);
-  let t=await T();
-  check("nel pannello ognuno ha le sue volte", /Fo[\s\S]{0,6}🎖️ 2/.test(t)&&/Gianni[\s\S]{0,6}🎖️ 0/.test(t), t.slice(t.indexOf("Le volte si contano"),t.indexOf("Le volte si contano")+600));
-  await p.locator("main button",{hasText:"Azzera"}).click(); await w(900);
-  check("azzerare scrive da quando si conta", !!(await sett()).giroInizio, JSON.stringify(await sett()));
-  await p.locator("main button",{hasText:"Chiudi"}).first().click(); await w(400);
-  g=await giroCard();
-  check("e si riparte tutti da zero", /N° 1/.test(g)&&/giro fatto da\s*0 su 6/.test(g), g);
-  await tab("CLASSIFICA");
-  check("ma il conto in classifica resta quello di sempre", await capiDi("Fo")===2, await capiDi("Fo"));
+  r=await chi();
+  check("Gianni, con un segno a mano rimasto, resta a zero: tocca a lui", r.form==="Gianni"||r.cap==="Gianni", JSON.stringify(r));
 
   console.log("\n— ERRORI JS —");
   check("nessun errore in pagina", errs.length===0, errs.slice(0,2).join(" || "));

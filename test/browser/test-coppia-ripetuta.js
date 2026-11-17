@@ -21,7 +21,7 @@ const check=(n,v,x="")=>{(v?ok:ko).push(n);console.log((v?"  ✓ ":"  ✗ ")+n+(
     return{cap:(c||"").replace(" (tu)","").trim(),form:(f||"").replace(" (tu)","").trim()};};
   const id=n=>p.evaluate(n=>(window.__fakedb().groups[0].data.players.find(x=>x.name===n)||{}).id,n);
   const nome=i=>p.evaluate(i=>(window.__fakedb().groups[0].data.players.find(x=>x.id===i)||{}).name,i);
-  const giroCard=async()=>{const t=await T();const i=t.indexOf("GIRO DEI CAPITANI");return i<0?"(nessuna scheda)":t.slice(i,i+700);};
+  const perche=async()=>{const t=await T();const i=t.indexOf("Perché loro.");return i<0?"(nessun perché)":t.slice(i,t.indexOf("\n\n",i)>0?Math.min(t.indexOf("Scegli capitano",i)>0?t.indexOf("Scegli capitano",i):i+500,i+500):i+500);};
   const daCapo=async()=>{
     await tab("SQUADRE");
     const r=p.locator("main button",{hasText:"Rifai da capo la selezione"});
@@ -69,11 +69,10 @@ const check=(n,v,x="")=>{(v?ok:ko).push(n);console.log((v?"  ✓ ":"  ✗ ")+n+(
   check("e capitano Luca (ultimo dei rimasti)", r.cap==="Luca", JSON.stringify(r));
   let t=await T();
   check("l'app spiega perché, con i numeri", /Perché loro\.[\s\S]{0,80}tocca a chi l'ha fatto meno volte \(mai\)/.test(t)&&/Mera è il primo in classifica e Luca l'ultimo/.test(t), t.slice(t.indexOf("Perché"),t.indexOf("Perché")+300));
-  let g=await giroCard();
-  const tocca=((g.match(/Tocca a:\s*([^\n]+)/)||[])[1]||"").split(",").map(x=>x.trim()).sort().join(",");
-  check("la scheda: tocca a Mera, Gianni, Ale, Luca (in ordine di classifica)", tocca==="Ale,Gianni,Luca,Mera", g);
-  check("e lo dice in italiano: a chi non l'ha mai fatto", /a chi non l'ha mai fatto/.test(g), g);
-  check("e Perro e Fo l'hanno fatto: 2 su 6", /giro fatto da\s*2 su 6/.test(g), g);
+  let g=await perche();
+  const tocca=((g.match(/\(mai\):\s*([^.]+)\./)||[])[1]||"").split(",").map(x=>x.trim()).sort().join(",");
+  check("tocca a Mera, Gianni, Ale, Luca: tutti quelli che non l'hanno mai fatto", tocca==="Ale,Gianni,Luca,Mera", g);
+  check("la scheda del giro non c'è più", !/GIRO DEI CAPITANI/.test(await T()), "");
 
   console.log("\n— LA VECCHIA LISTA SERVE ANCORA PER LO STORICO —");
   const s=(await db()).board[0].settings;
@@ -87,7 +86,7 @@ const check=(n,v,x="")=>{(v?ok:ko).push(n);console.log((v?"  ✓ ":"  ✗ ")+n+(
     window.__asOther("groups",{id:g.id},{data:g.data});
   }); await w(900);
   await daCapo();
-  g=await giroCard();
+  g=await perche();
   check("avvisa: 1 partita senza formatore e capitano", /1 partita non ha formatore e capitano/.test(g)&&/Ricostruisci dallo storico/.test(g), g);
 
   console.log("\n— REGISTRANDO A MANO, I RUOLI ARRIVANO DALLA SELEZIONE —");

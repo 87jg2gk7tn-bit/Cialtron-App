@@ -56,7 +56,7 @@ const C={accent:"#B8FF00",bg:"#090909",card:"#111",card2:"#1A1A1A",card3:"#222",
 /* Versione pubblicata: confrontata con version.json per avvisare che c'è
    un aggiornamento. Sul telefono la pagina resta in cache, senza questo
    controllo le modifiche non arriverebbero finché non si svuota la cache. */
-const APP_VERSION="2026-11-17.4";
+const APP_VERSION="2026-11-17.5";
 
 function useUpdateCheck(){
   const [next,setNext]=useState(null);
@@ -2355,8 +2355,11 @@ function CallupSection({players,board,matchDate,setCallup,setSettings,myPlayerId
 /* ═══════════════════════════════════════════════════════
    IL GIRO DEI CAPITANI: TOCCA A CHI L'HA FATTO MENO VOLTE
    Per ognuno si contano le volte che ha fatto il formatore o il capitano
-   nelle partite registrate (che se lo portano scritto), più quelle segnate
-   a mano per le partite che l'app non conosce (settings.giroAMano).
+   nelle partite registrate, che se lo portano scritto. Solo quelle: le
+   volte segnate a mano non contano più, perché la scheda dove si vedevano
+   e si toglievano non c'è più, e un conto nascosto che non puoi
+   controllare è peggio di niente. Le partite vecchie si sistemano da
+   Partite → Ricostruisci dallo storico.
 
    La vecchia lista "già fatto" (settings.giroFatti) NON conta: la
    scrivevano anche le selezioni di prova, quindi dava una volta a gente che
@@ -2387,9 +2390,7 @@ function giroDi(classifica,matches,settings){
   partite.forEach(m=>[m.formatore,m.capitano].forEach(id=>{
     if(id&&volte[id]!==undefined){volte[id]++;quando[id].push(m.date);}
   }));
-  const manuali=(Array.isArray(s.giroAMano)?s.giroAMano:[]).filter(id=>ids.indexOf(id)>=0);
-  manuali.forEach(id=>volte[id]++);
-  return{inizio,partite:partite.length,volte,quando,manuali,totale:ids.length};
+  return{inizio,partite:partite.length,volte,quando,totale:ids.length};
 }
 /* Quante volte ognuno ha fatto il formatore e il capitano, su tutte le
    partite registrate (non solo dall'ultimo azzeramento). */
@@ -2542,7 +2543,6 @@ function BloccoEsterni({ids,info,onAggiungi,onModifica,onElimina,testo}){
 
 function TeamsSection({standings,classifica,eligible,teamSel,setSel,myPlayerId,isAdmin,capId,pickId,capManual,pickManual,decaduti,giro,setSettings,availableIds,playAll,matchIso,matchLabel,onUseTeams,onAggiungi}){
   const [scegli,setScegli]=useState(false);
-  const [giroApri,setGiroApri]=useState(false);
   const [agg,setAgg]=useState(false);
   const [modifica,setModifica]=useState(false);
 
@@ -2757,6 +2757,10 @@ function TeamsSection({standings,classifica,eligible,teamSel,setSel,myPlayerId,i
                        Fra questi {picker.name} è il primo in classifica e {captain.name} l'ultimo.</>
                     :<>{nomeDi(turno[0])} è l'unico fra chi gioca ad averlo fatto {volteTxt(L)}: un ruolo è suo.
                        L'altro va a {nomeDi(turno[0])===picker.name?captain.name:picker.name}, fra chi viene subito dopo ({volteTxt(v(turno[0]===picker.id?captain.id:picker.id))}).</>}
+                {giro.senzaRuoli>0&&<div style={{color:C.red,marginTop:4}}>
+                  ⚠️ {giro.senzaRuoli} {giro.senzaRuoli===1?"partita non ha":"partite non hanno"} formatore e capitano: finché non le sistemi il conto non è giusto.
+                  Partite → Ricostruisci dallo storico.
+                </div>}
               </div>
             );
           })()}
@@ -2776,89 +2780,6 @@ function TeamsSection({standings,classifica,eligible,teamSel,setSel,myPlayerId,i
             <div style={{fontSize:11,color:C.muted,marginBottom:10,lineHeight:1.5,textAlign:"center"}}>
               Ancora meno di due sì: per ora formatore e capitano sono il primo e l'ultimo di tutta la rosa.
               Appena rispondete, i ruoli passano a chi c'è.
-            </div>
-          )}
-          {(classifica||standings).length>=2&&(
-            <div style={{background:C.card2,border:`1px solid ${C.border}`,borderRadius:12,padding:"12px 14px",marginBottom:10}}>
-              <div style={{display:"flex",alignItems:"center",gap:8}}>
-                <div style={{flex:1,minWidth:0}}>
-                  {(()=>{
-                    const g=giro||{volte:{},quando:{},manuali:[],totale:0,partite:0,presenti:[],livello:0};
-                    const nome=id=>(standings.find(p=>p.id===id)||{}).name;
-                    const ids=(classifica||standings).map(p=>p.id);
-                    const v=id=>(g.volte&&g.volte[id])||0;
-                    const L=g.livello||0;
-                    const pres=g.presenti||[];
-                    const volteTxt=n=>n===0?"mai":n===1?"1 volta":n+" volte";
-                    /* tocca: fra tutta la classifica, chi è a L volte (presente o no) */
-                    const tocca=ids.filter(id=>v(id)===L);
-                    /* indietro: sotto L, quindi oggi non c'è; al ritorno tocca a lui per primo */
-                    const indietro=ids.filter(id=>v(id)<L);
-                    const avanti=ids.filter(id=>v(id)>L).length;
-                    const inizio=g.inizio?dataLunga(new Date(g.inizio)):null;
-                    return(
-                      <>
-                        <div style={{fontSize:10,color:C.muted,letterSpacing:1,marginBottom:4}}>🔄 GIRO DEI CAPITANI · N° {L+1}</div>
-                        <div style={{fontSize:11,color:C.muted,lineHeight:1.6}}>
-                          <div>Tocca a chi l'ha fatto meno volte: adesso {L===0
-                            ?<>a chi <strong style={{color:C.text}}>non l'ha mai fatto</strong></>
-                            :<>a chi l'ha fatto <strong style={{color:C.text}}>{volteTxt(L)}</strong></>}. Fra questi decide la classifica.</div>
-                          <div>
-                            {inizio?<>Si conta dal <strong style={{color:C.text}}>{inizio}</strong></>:<>Si conta dalla prima partita</>}
-                            {" · "}<strong style={{color:C.text}}>{g.partite}</strong> {g.partite===1?"partita":"partite"}
-                            {" · "}giro fatto da <strong style={{color:C.text}}>{avanti} su {ids.length}</strong>
-                            {tocca.length>0&&<>, circa <strong style={{color:C.text}}>{Math.ceil(tocca.length/2)}</strong> {Math.ceil(tocca.length/2)===1?"partita":"partite"} per chiuderlo</>}
-                          </div>
-                          {tocca.length>0&&<div>Tocca a: <span style={{color:C.text}}>{tocca.map(id=>nome(id)+(pres.indexOf(id)<0?" (non gioca)":"")).filter(Boolean).join(", ")}</span></div>}
-                          {indietro.length>0&&<div style={{color:C.accent}}>Indietro: {indietro.map(id=>nome(id)+" ("+volteTxt(v(id))+")").join(", ")}. Quando torna tocca a lui per primo.</div>}
-                          {g.senzaRuoli>0&&<div style={{color:C.red,marginTop:4}}>
-                            ⚠️ {g.senzaRuoli} {g.senzaRuoli===1?"partita non ha":"partite non hanno"} formatore e capitano: finché non le sistemi il conto non è giusto
-                            e possono tornare fuori sempre gli stessi. Partite → Ricostruisci dallo storico.
-                          </div>}
-                        </div>
-                      </>
-                    );
-                  })()}
-                </div>
-                <Btn onClick={()=>setGiroApri(v=>!v)} variant="ghost" small style={{flexShrink:0}}>{giroApri?"Chiudi":"Sistema"}</Btn>
-              </div>
-              {giroApri&&(
-                <div style={{borderTop:`1px solid ${C.border}`,marginTop:10,paddingTop:10}}>
-                  <div style={{fontSize:11,color:C.muted,marginBottom:8,lineHeight:1.5}}>
-                    Le volte si contano dalle partite registrate: quelle non si toccano da qui, si correggono nella partita (Partite → ✏️).
-                    Qui aggiungi a mano una volta a chi l'ha fatto in una partita che l'app non conosce.
-                  </div>
-                  {(classifica||standings).map(p=>{
-                    const g=giro||{quando:{},manuali:[],volte:{}};
-                    const daPartite=((g.quando&&g.quando[p.id])||[]).length;
-                    const aMano=(g.manuali||[]).indexOf(p.id)>=0;
-                    const tot=(g.volte&&g.volte[p.id])||0;
-                    return(
-                      <button key={p.id} onClick={()=>{
-                          const cur=g.manuali||[];
-                          const patch={giroAMano:aMano?cur.filter(x=>x!==p.id):cur.concat(p.id)};
-                          /* una volta in più si porta via anche la sua nomina a mano */
-                          if(!aMano){
-                            if(g.manCap===p.id)patch.captainId=null;
-                            if(g.manPick===p.id)patch.pickerId=null;
-                          }
-                          setSettings(patch);
-                        }}
-                        style={{width:"100%",display:"flex",alignItems:"center",gap:9,marginBottom:6,padding:"7px 9px",borderRadius:9,cursor:"pointer",
-                                border:`1px solid ${aMano?C.accent+"55":C.border}`,background:aMano?C.accent+"10":C.card,fontFamily:"'DM Sans',sans-serif"}}>
-                        <Avatar player={p} size={24}/>
-                        <span style={{flex:1,textAlign:"left",fontSize:13,color:C.text,fontWeight:500}}>{p.name}</span>
-                        <span style={{fontSize:11,color:tot?C.accent:C.muted,textAlign:"right"}}>
-                          🎖️ {tot}{daPartite&&aMano?" · 1 a mano":aMano?" (a mano)":""}
-                        </span>
-                      </button>
-                    );
-                  })}
-                  <div style={{fontSize:11,color:C.muted,margin:"6px 0",lineHeight:1.5}}>Tocca la riga per aggiungere o togliere la volta segnata a mano.</div>
-                  <Btn onClick={()=>setSettings({giroAMano:[],giroInizio:new Date().toISOString()})}
-                       variant="ghost" full small style={{marginTop:6}}>↺ Azzera: da adesso si riparte tutti da zero</Btn>
-                </div>
-              )}
             </div>
           )}
 
