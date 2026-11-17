@@ -56,7 +56,7 @@ const C={accent:"#B8FF00",bg:"#090909",card:"#111",card2:"#1A1A1A",card3:"#222",
 /* Versione pubblicata: confrontata con version.json per avvisare che c'è
    un aggiornamento. Sul telefono la pagina resta in cache, senza questo
    controllo le modifiche non arriverebbero finché non si svuota la cache. */
-const APP_VERSION="2026-11-17.5";
+const APP_VERSION="2026-11-17.6";
 
 function useUpdateCheck(){
   const [next,setNext]=useState(null);
@@ -1651,13 +1651,22 @@ function proponiRuoli(m,tracce,ordine,ospite){
   return{fonte:"indizio",primi:[a,b]};
 }
 
-function RuoliStorico({matches,players,tracce,ordine,saveMatches,setSettings,say}){
+/* ═══════════════════════════════════════════════════════
+   FORMATORI E CAPITANI — la sezione in Partite
+   Qui si correggono formatore e capitano di ogni partita (le vecchie,
+   che non li avevano, arrivano già ricostruite dallo storico) e c'è
+   "Sistema": il conto di ognuno per il giro, le volte segnate a mano per
+   le partite che l'app non conosce, e l'azzeramento.
+═══════════════════════════════════════════════════════ */
+function RuoliStorico({matches,players,tracce,ordine,saveMatches,setSettings,say,giro,classificaP}){
   const [apri,setApri]=useState(false), [busy,setBusy]=useState(false);
+  const [tutte,setTutte]=useState(false), [azzera,setAzzera]=useState(false);
   const ospite=id=>isExt(id)||!!((players.find(p=>p.id===id)||{}).visitor);
   const nome=id=>(players.find(p=>p.id===id)||{}).name||"?";
-  const vecchie=(matches||[]).filter(m=>!m.capitano||!m.formatore)
-                 .slice().sort((a,b)=>quandoMs(a.date)-quandoMs(b.date));
-  const [scelte,setScelte]=useState(null);   // id partita → {formatore,capitano,fonte}
+  const recenti=(matches||[]).slice().sort((a,b)=>quandoMs(b.date)-quandoMs(a.date));
+  const vecchie=recenti.filter(m=>!m.capitano||!m.formatore);
+  const segnate=recenti.filter(m=>m.capitano&&m.formatore);
+  const [scelte,setScelte]=useState({});   // solo quello che hai toccato: id partita → {formatore,capitano}
   const proposte=useMemo(()=>{
     const o={};
     vecchie.forEach(m=>{
@@ -1666,75 +1675,125 @@ function RuoliStorico({matches,players,tracce,ordine,saveMatches,setSettings,say
     });
     return o;
   },[vecchie.map(m=>m.id).join(","),(tracce||[]).join(","),(ordine||[]).join(",")]);
-  const val=scelte||proposte;
+  const val=m=>Object.assign({formatore:m.formatore||"",capitano:m.capitano||""},proposte[m.id]||{},scelte[m.id]||{});
 
-  if(!vecchie.length)return null;
+  if(!(matches||[]).length)return null;
 
-  const imposta=(mid,campo,v)=>{
-    const cur=Object.assign({},val[mid]); cur[campo]=v;
+  const imposta=(m,campo,v)=>{
+    const cur=Object.assign({},val(m)); cur[campo]=v;
     if(v&&campo==="capitano"&&cur.formatore===v)cur.formatore="";
     if(v&&campo==="formatore"&&cur.capitano===v)cur.capitano="";
-    setScelte(Object.assign({},val,{[mid]:cur}));
+    setScelte(Object.assign({},scelte,{[m.id]:{formatore:cur.formatore,capitano:cur.capitano}}));
   };
+  /* cosa cambierebbe salvando: le vecchie con la proposta, e quelle toccate */
+  const dentro=(m,id)=>id&&((m.white||[]).indexOf(id)>=0||(m.black||[]).indexOf(id)>=0)&&!ospite(id)?id:null;
+  const nuova=m=>{const v=val(m);return{formatore:dentro(m,v.formatore),capitano:dentro(m,v.capitano)};};
+  const cambiate=(matches||[]).filter(m=>{const n=nuova(m);return (n.formatore||null)!==(m.formatore||null)||(n.capitano||null)!==(m.capitano||null);});
   const salva=async()=>{
     setBusy(true);
-    const next=(matches||[]).map(m=>{
-      const v=val[m.id]; if(!v)return m;
-      const dentro=id=>id&&((m.white||[]).indexOf(id)>=0||(m.black||[]).indexOf(id)>=0)&&!ospite(id)?id:null;
-      const f=dentro(v.formatore), c=dentro(v.capitano);
-      if(!f&&!c)return m;
-      return Object.assign({},m,{formatore:f||m.formatore||null,capitano:c||m.capitano||null});
-    });
-    /* il passato non chiude giri: lo fanno solo le partite nuove. Se no un
-       segno rimasto da una prova completerebbe l'elenco e il giro si
-       chiuderebbe proprio mentre lo stai ripulendo */
+    const ids=cambiate.map(m=>m.id);
+    const next=(matches||[]).map(m=>ids.indexOf(m.id)<0?m:Object.assign({},m,nuova(m)));
     await saveMatches(next,{senzaGiro:true});
-    setBusy(false);setScelte(null);
-    say&&say("Capitani e formatori salvati nelle partite");
+    setBusy(false);setScelte({});
+    say&&say(ids.length===1?"Partita aggiornata":ids.length+" partite aggiornate");
   };
   const fonti={sicura:["probabile: squadre fatte con l'app, e la lista del giro lo conferma",C.green],
                indizio:["la lista del giro non lo conferma: sceglili tu",C.accent],
                nessuna:["nessuna traccia: sceglili tu",C.muted]};
 
+  const Partita=({m})=>{
+    const v=val(m), daRicostruire=!m.capitano||!m.formatore, f=fonti[v.fonte]||fonti.nessuna;
+    const inCampo=(m.white||[]).concat(m.black||[]).filter(id=>!ospite(id));
+    return(
+      <div style={{background:C.card2,border:`1px solid ${daRicostruire?C.accent+"45":C.border}`,borderRadius:10,padding:12,marginBottom:8}}>
+        <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:4}}>
+          <span style={{fontSize:13,fontWeight:800,color:C.text}}>{new Date(m.date).toLocaleDateString("it-IT",{day:"numeric",month:"long"})}</span>
+          <span style={{fontSize:12,color:C.muted}}>⬜ {m.scoreWhite} – {m.scoreBlack} ⬛</span>
+        </div>
+        {daRicostruire&&<div style={{fontSize:10,color:f[1],marginBottom:8,lineHeight:1.5}}>
+          {f[0]}{v.fonte==="indizio"&&v.primi&&<> · primi in squadra: {nome(v.primi[0])} e {nome(v.primi[1])}, se le squadre le ha fatte l'app erano loro</>}
+        </div>}
+        {[["formatore","Formatore"],["capitano","Capitano"]].map(([k,lab])=>(
+          <div key={k} style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+            <span style={{fontSize:11,color:C.muted,width:72,flexShrink:0}}>{lab}</span>
+            <select value={v[k]||""} onChange={e=>imposta(m,k,e.target.value)} aria-label={lab+" del "+m.date}
+              style={{flex:1,background:C.card,border:`1px solid ${C.border}`,color:C.text,borderRadius:8,padding:"7px 10px",fontSize:13,fontFamily:"'DM Sans',sans-serif"}}>
+              <option value="">— non so —</option>
+              {inCampo.map(id=><option key={id} value={id}>{nome(id)}</option>)}
+            </select>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  const g=giro||{volte:{},quando:{},manuali:[]};
+  const volteTxt=n=>n===0?"mai":n===1?"1 volta":n+" volte";
+  const visibili=tutte?segnate:segnate.slice(0,4);
+
   return(
-    <div style={{background:C.card,border:`1px solid ${C.accent}45`,borderRadius:14,padding:16,marginBottom:16}}>
-      <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,letterSpacing:2,color:C.accent}}>🎖️ CAPITANI DELLE PARTITE VECCHIE</div>
+    <div style={{background:C.card,border:`1px solid ${vecchie.length?C.accent+"45":C.border}`,borderRadius:14,padding:16,marginBottom:16}}>
+      <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,letterSpacing:2,color:vecchie.length?C.accent:C.text}}>🎖️ FORMATORI E CAPITANI</div>
       <div style={{fontSize:12,color:C.muted,lineHeight:1.6,margin:"6px 0 12px"}}>
-        {vecchie.length?<><strong style={{color:C.text}}>{vecchie.length} {vecchie.length===1?"partita":"partite"}</strong> senza capitano e formatore: prima l'app non se li segnava.
-          Li ho ricostruiti dallo storico — controlla, correggi se serve, e salva.</>
-          :<>Tutte le partite hanno capitano e formatore.</>}
+        {vecchie.length
+          ?<><strong style={{color:C.text}}>{vecchie.length} {vecchie.length===1?"partita":"partite"}</strong> senza formatore e capitano: li ho ricostruiti dallo storico — controlla, correggi se serve, e salva.</>
+          :<>Correggi chi ha fatto formatore e capitano in ogni partita. Sotto c'è Sistema: il conto di ognuno per il giro.</>}
       </div>
       {!apri?(
-        <Btn onClick={()=>setApri(true)} full>{vecchie.length?"Ricostruisci dallo storico":"Rivedi"}</Btn>
+        <Btn onClick={()=>setApri(true)} full variant={vecchie.length?"primary":"ghost"}>{vecchie.length?"Ricostruisci dallo storico":"Correggi formatori e capitani · Sistema"}</Btn>
       ):(
         <>
-          {vecchie.map(m=>{
-            const v=val[m.id]||{}, f=fonti[v.fonte]||fonti.nessuna;
-            const inCampo=(m.white||[]).concat(m.black||[]).filter(id=>!ospite(id));
-            return(
-              <div key={m.id} style={{background:C.card2,border:`1px solid ${C.border}`,borderRadius:10,padding:12,marginBottom:8}}>
-                <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:4}}>
-                  <span style={{fontSize:13,fontWeight:800,color:C.text}}>{new Date(m.date).toLocaleDateString("it-IT",{day:"numeric",month:"long"})}</span>
-                  <span style={{fontSize:12,color:C.muted}}>⬜ {m.scoreWhite} – {m.scoreBlack} ⬛</span>
-                </div>
-                <div style={{fontSize:10,color:f[1],marginBottom:8,lineHeight:1.5}}>
-                  {f[0]}{v.fonte==="indizio"&&v.primi&&<> · primi in squadra: {nome(v.primi[0])} e {nome(v.primi[1])}, se le squadre le ha fatte l'app erano loro</>}
-                </div>
-                {[["formatore","Formatore"],["capitano","Capitano"]].map(([k,lab])=>(
-                  <div key={k} style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
-                    <span style={{fontSize:11,color:C.muted,width:72,flexShrink:0}}>{lab}</span>
-                    <select value={v[k]||""} onChange={e=>imposta(m.id,k,e.target.value)} aria-label={lab+" del "+m.date}
-                      style={{flex:1,background:C.card,border:`1px solid ${C.border}`,color:C.text,borderRadius:8,padding:"7px 10px",fontSize:13,fontFamily:"'DM Sans',sans-serif"}}>
-                      <option value="">— non so —</option>
-                      {inCampo.map(id=><option key={id} value={id}>{nome(id)}</option>)}
-                    </select>
-                  </div>
-                ))}
-              </div>
-            );
-          })}
-          {vecchie.length>0&&<Btn onClick={salva} disabled={busy} full style={{marginTop:4}}>{busy?"Salvo…":"Salva capitani e formatori"}</Btn>}
-          <Btn onClick={()=>{setApri(false);setScelte(null);}} variant="ghost" full small style={{marginTop:8}}>Chiudi</Btn>
+          {vecchie.length>0&&<div style={{fontSize:10,color:C.accent,fontWeight:800,letterSpacing:1,margin:"4px 0 8px"}}>DA SISTEMARE</div>}
+          {vecchie.map(m=><Partita key={m.id} m={m}/>)}
+          {segnate.length>0&&<div style={{fontSize:10,color:C.muted,fontWeight:800,letterSpacing:1,margin:"10px 0 8px"}}>GIÀ SEGNATE · LE PIÙ RECENTI</div>}
+          {visibili.map(m=><Partita key={m.id} m={m}/>)}
+          {segnate.length>visibili.length&&(
+            <button onClick={()=>setTutte(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:11,
+              fontFamily:"'DM Sans',sans-serif",padding:"2px 0 8px",textDecoration:"underline",display:"block",margin:"0 auto"}}>
+              Mostra tutte ({segnate.length})
+            </button>
+          )}
+          <Btn onClick={salva} disabled={busy||!cambiate.length} full style={{marginTop:4}}>
+            {busy?"Salvo…":cambiate.length?(cambiate.length===1?"Salva 1 partita":"Salva "+cambiate.length+" partite"):"Nessuna modifica"}
+          </Btn>
+
+          {/* ─── Sistema: il conto di ognuno per il giro ─── */}
+          <div style={{borderTop:`1px solid ${C.border}`,marginTop:16,paddingTop:12}}>
+            <div style={{fontSize:10,color:C.muted,fontWeight:800,letterSpacing:1,marginBottom:6}}>⚙️ SISTEMA · IL CONTO DEL GIRO</div>
+            <div style={{fontSize:11,color:C.muted,lineHeight:1.6,marginBottom:10}}>
+              Quante volte ognuno ha fatto formatore o capitano{g.inizio?<> dal <strong style={{color:C.text}}>{dataLunga(new Date(g.inizio))}</strong></>:null}:
+              tocca a chi ne ha meno. Le volte delle partite si correggono qui sopra.
+              Tocca una riga per aggiungere o togliere <strong style={{color:C.text}}>una volta a mano</strong>, per una partita che l'app non conosce.
+            </div>
+            {(classificaP||[]).map(p=>{
+              const tot=(g.volte&&g.volte[p.id])||0, aMano=(g.manuali||[]).indexOf(p.id)>=0;
+              return(
+                <button key={p.id} onClick={async()=>{
+                    const cur=g.manuali||[];
+                    await setSettings({giroAMano:aMano?cur.filter(x=>x!==p.id):cur.concat(p.id)});
+                  }}
+                  style={{width:"100%",display:"flex",alignItems:"center",gap:9,marginBottom:6,padding:"7px 9px",borderRadius:9,cursor:"pointer",
+                          border:`1px solid ${aMano?C.accent+"55":C.border}`,background:aMano?C.accent+"10":C.card2,fontFamily:"'DM Sans',sans-serif"}}>
+                  <Avatar player={p} size={24}/>
+                  <span style={{flex:1,textAlign:"left",fontSize:13,color:C.text,fontWeight:500}}>{p.name}</span>
+                  <span style={{fontSize:11,color:tot?C.accent:C.muted,textAlign:"right"}}>
+                    🎖️ {volteTxt(tot)}{aMano?" · di cui 1 a mano":""}
+                  </span>
+                </button>
+              );
+            })}
+            {!azzera
+              ?<Btn onClick={()=>setAzzera(true)} variant="ghost" full small style={{marginTop:6}}>↺ Azzera il conto del giro</Btn>
+              :<div style={{background:C.red+"10",border:`1px solid ${C.red}30`,borderRadius:10,padding:10,marginTop:6}}>
+                 <div style={{fontSize:11,color:C.text,lineHeight:1.5,marginBottom:8}}>Da adesso si riparte tutti da zero, anche le volte a mano. Le partite non si toccano e il 🎖️ in classifica resta. Sicuro?</div>
+                 <div style={{display:"flex",gap:8}}>
+                   <Btn onClick={()=>setAzzera(false)} variant="ghost" small style={{flex:1}}>No</Btn>
+                   <Btn onClick={async()=>{await setSettings({giroAMano:[],giroInizio:new Date().toISOString()});setAzzera(false);say&&say("Giro azzerato");}}
+                        variant="danger" small style={{flex:1}}>Sì, azzera</Btn>
+                 </div>
+               </div>}
+          </div>
+          <Btn onClick={()=>{setApri(false);setScelte({});setAzzera(false);}} variant="ghost" full small style={{marginTop:10}}>Chiudi</Btn>
         </>
       )}
     </div>
@@ -1742,7 +1801,7 @@ function RuoliStorico({matches,players,tracce,ordine,saveMatches,setSettings,say
 }
 
 function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed,golVivo,squadreFatte,togliGolVivo,azzeraGolVivo,
-                       tracce,ordine,setSettings,say}){
+                       tracce,ordine,setSettings,say,giro,classificaP}){
   const [extra,setExtra]=useState([]);   // esterni aggiunti al volo per questa partita
   const [extInfo,setExtInfo]=useState({});   // il loro nome e le loro stelle
   const [phase,setPhase]=useState("list"), [white,setWhite]=useState([]), [black,setBlack]=useState([]);
@@ -1874,7 +1933,7 @@ function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed
       {phase==="list"&&(
         <>
           <RuoliStorico matches={matches} players={players} tracce={tracce} ordine={ordine}
-                        saveMatches={saveMatches} setSettings={setSettings} say={say}/>
+                        saveMatches={saveMatches} setSettings={setSettings} say={say} giro={giro} classificaP={classificaP}/>
           {vivi.length>0&&(
             <div style={{background:C.card,border:`1px solid ${C.accent}45`,borderRadius:14,padding:16,marginBottom:16}}>
               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
@@ -2355,11 +2414,10 @@ function CallupSection({players,board,matchDate,setCallup,setSettings,myPlayerId
 /* ═══════════════════════════════════════════════════════
    IL GIRO DEI CAPITANI: TOCCA A CHI L'HA FATTO MENO VOLTE
    Per ognuno si contano le volte che ha fatto il formatore o il capitano
-   nelle partite registrate, che se lo portano scritto. Solo quelle: le
-   volte segnate a mano non contano più, perché la scheda dove si vedevano
-   e si toglievano non c'è più, e un conto nascosto che non puoi
-   controllare è peggio di niente. Le partite vecchie si sistemano da
-   Partite → Ricostruisci dallo storico.
+   nelle partite registrate, che se lo portano scritto, più le volte
+   segnate a mano (settings.giroAMano) per le partite che l'app non
+   conosce. Tutte e due si vedono e si correggono in Partite → Formatori e
+   capitani: lì c'è Sistema, con il conto di ognuno.
 
    La vecchia lista "già fatto" (settings.giroFatti) NON conta: la
    scrivevano anche le selezioni di prova, quindi dava una volta a gente che
@@ -2390,7 +2448,9 @@ function giroDi(classifica,matches,settings){
   partite.forEach(m=>[m.formatore,m.capitano].forEach(id=>{
     if(id&&volte[id]!==undefined){volte[id]++;quando[id].push(m.date);}
   }));
-  return{inizio,partite:partite.length,volte,quando,totale:ids.length};
+  const manuali=(Array.isArray(s.giroAMano)?s.giroAMano:[]).filter(id=>ids.indexOf(id)>=0);
+  manuali.forEach(id=>volte[id]++);
+  return{inizio,partite:partite.length,volte,quando,manuali,totale:ids.length};
 }
 /* Quante volte ognuno ha fatto il formatore e il capitano, su tutte le
    partite registrate (non solo dall'ultimo azzeramento). */
@@ -2759,7 +2819,7 @@ function TeamsSection({standings,classifica,eligible,teamSel,setSel,myPlayerId,i
                        L'altro va a {nomeDi(turno[0])===picker.name?captain.name:picker.name}, fra chi viene subito dopo ({volteTxt(v(turno[0]===picker.id?captain.id:picker.id))}).</>}
                 {giro.senzaRuoli>0&&<div style={{color:C.red,marginTop:4}}>
                   ⚠️ {giro.senzaRuoli} {giro.senzaRuoli===1?"partita non ha":"partite non hanno"} formatore e capitano: finché non le sistemi il conto non è giusto.
-                  Partite → Ricostruisci dallo storico.
+                  Partite → Formatori e capitani.
                 </div>}
               </div>
             );
@@ -3944,7 +4004,8 @@ function CialtronApp(){
                                                              capitano:teamSel.capId||"",formatore:teamSel.pickId||""}:null}
                               prefill={prefill} onPrefillUsed={prefillUsato}
                               tracce={Array.isArray(board.settings.giroFatti)?board.settings.giroFatti:[]}
-                              ordine={classifica.map(p=>p.id)} setSettings={setSettings} say={say}/>}
+                              ordine={classifica.map(p=>p.id)} setSettings={setSettings} say={say}
+                              giro={giroStato} classificaP={classifica}/>}
         {tab==="teams"    &&<TeamsSection standings={standings} classifica={classifica} teamSel={teamSel} setSel={setSel} myPlayerId={myPlayerId} isAdmin={isAdmin}
                               capId={capId} pickId={pickId} capManual={capManual} pickManual={pickManual} setSettings={setSettings}
                               availableIds={availableIds} eligible={eligible} playAll={!!board.settings.playAll}

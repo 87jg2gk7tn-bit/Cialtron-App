@@ -87,7 +87,7 @@ const check=(n,v,x="")=>{(v?ok:ko).push(n);console.log((v?"  ✓ ":"  ✗ ")+n+(
   }); await w(900);
   await daCapo();
   g=await perche();
-  check("avvisa: 1 partita senza formatore e capitano", /1 partita non ha formatore e capitano/.test(g)&&/Ricostruisci dallo storico/.test(g), g);
+  check("avvisa: 1 partita senza formatore e capitano", /1 partita non ha formatore e capitano/.test(g)&&/Partite → Formatori e capitani/.test(g), g);
 
   console.log("\n— REGISTRANDO A MANO, I RUOLI ARRIVANO DALLA SELEZIONE —");
   await p.getByText("METODO CAVA").click(); await w(900);

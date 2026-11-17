@@ -62,7 +62,7 @@ const check=(n,v,x="")=>{(v?ok:ko).push(n);console.log((v?"  ✓ ":"  ✗ ")+n+(
   console.log("\n— LA SCHEDA IN PARTITE —");
   await tab("PARTITE");
   let t=await T();
-  check("in Partite c'è la scheda delle partite vecchie", /CAPITANI DELLE PARTITE VECCHIE/.test(t), t.slice(0,500));
+  check("in Partite c'è la sezione Formatori e capitani", /FORMATORI E CAPITANI/.test(t), t.slice(0,500));
   check("dice quante sono senza ruoli: 3", /3 partite/.test(t), t.slice(0,500));
   await p.locator("main button",{hasText:"Ricostruisci dallo storico"}).click(); await w(600);
   t=await T();
@@ -82,7 +82,7 @@ const check=(n,v,x="")=>{(v?ok:ko).push(n);console.log((v?"  ✓ ":"  ✗ ")+n+(
   await sel("Formatore","2026-10-01T20:00:00Z").selectOption({label:"Fo"}); await w(200);
   await sel("Capitano","2026-10-01T20:00:00Z").selectOption({label:"Bisseck"}); await w(300);
   t=await T();
-  await p.locator("main button",{hasText:"Salva capitani e formatori"}).click(); await w(1300);
+  await p.locator("main button",{hasText:"Salva 3 partite"}).click(); await w(1300);
   const ms=(await db()).groups[0].data.matches;
   const r=id=>{const m=ms.find(x=>x.id===id);return [m.formatore,m.capitano].map(x=>Object.keys(I).find(n=>I[n]===x)).join("/");};
   check("1ª salvata: Fo / Bisseck", r("m1")==="Fo/Bisseck", r("m1"));
@@ -93,7 +93,8 @@ const check=(n,v,x="")=>{(v?ok:ko).push(n);console.log((v?"  ✓ ":"  ✗ ")+n+(
   t=await T();
   /* i vecchi segni non contano più (li scrivevano anche le prove), quindi
      non c'è niente da ripulire: sistemate le partite la scheda sparisce */
-  check("sistemate tutte, la scheda sparisce", !/CAPITANI DELLE PARTITE VECCHIE/.test(t), t.slice(0,400));
+  check("sistemate tutte, non c'è più niente 'da sistemare'", !/DA SISTEMARE/.test(t)&&/GIÀ SEGNATE/.test(t), t.slice(0,600));
+  check("ma la sezione resta, per correggerle quando serve", /FORMATORI E CAPITANI/.test(t)&&/Correggi chi ha fatto formatore e capitano/.test(t), t.slice(0,400));
   check("le partite in storico mostrano i ruoli", /Formatore\s*Fo\s*·\s*Capitano\s*Bisseck/.test(t), "");
 
 

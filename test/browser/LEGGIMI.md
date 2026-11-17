@@ -40,8 +40,10 @@ parte più.
 - `test-esterni-chiamata.js` — eliminare un esterno a chiamata in corso.
 - `test-giro-capitani.js` — il giro conta le volte: tocca a chi l'ha fatto
   meno, chi resta fuori non blocca il giro e quando torna tocca a lui; la
-  scelta a mano non scavalca il turno; i segni a mano non contano.
-- `test-storico-capitani.js` — ricostruire i ruoli delle partite vecchie.
+  scelta a mano non scavalca il turno; Sistema in Partite (conto, volta a
+  mano, correzione di una partita, azzera con conferma).
+- `test-storico-capitani.js` — ricostruire i ruoli delle partite vecchie
+  nella sezione Partite → Formatori e capitani.
 - `test-coppia-ripetuta.js` — il caso segnalato: la stessa coppia due volte di
   fila per colpa dei vecchi segni; il perché in Squadre; i ruoli che arrivano
   dalla selezione anche registrando a mano, e l'avviso se mancano.

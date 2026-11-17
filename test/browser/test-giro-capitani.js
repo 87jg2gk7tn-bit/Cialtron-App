@@ -171,16 +171,45 @@ const check=(n,v,x="")=>{(v?ok:ko).push(n);console.log((v?"  ✓ ":"  ✗ ")+n+(
   check("Perro 🎖️ 1", await capiDi("Perro")===1, await capiDi("Perro"));
   check("Gianni 🎖️ 0", await capiDi("Gianni")===0, await capiDi("Gianni"));
 
-  console.log("\n— LE VOLTE SEGNATE A MANO NON CONTANO PIÙ —");
-  /* un segno a mano rimasto da prima (es. Gianni): senza la scheda non si
-     vedrebbe, quindi non deve spostare niente */
-  await p.evaluate(async gid=>{
-    const d=window.__fakedb(), b=d.board[0];
-    window.__asOther("board",{group_id:b.group_id},{settings:Object.assign({},b.settings,{ruoliIso:null,captainId:null,pickerId:null,giroAMano:[gid],giroFatti:[gid]})});
-  },await id("Gianni")); await w(900);
+  console.log("\n— SISTEMA, IN PARTITE —");
+  await tab("PARTITE");
+  let t=await T();
+  check("in Partite c'è la sezione Formatori e capitani", /FORMATORI E CAPITANI/.test(t), t.slice(0,500));
+  await p.locator("main button",{hasText:/Correggi formatori e capitani · Sistema|Ricostruisci dallo storico/}).click(); await w(600);
+  t=await T();
+  check("con dentro Sistema, il conto del giro", /SISTEMA · IL CONTO DEL GIRO/.test(t), t.slice(t.indexOf("FORMATORI"),t.indexOf("FORMATORI")+400));
+  const riga=async n=>{const t=await T();const i=t.indexOf("SISTEMA · IL CONTO");const r=t.slice(i).split("\n");const k=r.findIndex(x=>x.trim()===n);return k<0?"?":r[k+1];};
+  check("Fo: 2 volte", /🎖️ 2 volte/.test(await riga("Fo")), await riga("Fo"));
+  check("Gianni: mai", /🎖️ mai/.test(await riga("Gianni")), await riga("Gianni"));
+  // una volta a mano a Gianni
+  await p.evaluate(()=>{const b=[...document.querySelectorAll("main button")].find(x=>/Gianni/.test(x.innerText)&&/🎖️/.test(x.innerText));b&&b.click();}); await w(900);
+  check("tocco la riga: Gianni 1 volta, di cui 1 a mano", /🎖️ 1 volta · di cui 1 a mano/.test(await riga("Gianni")), await riga("Gianni"));
+  check("e resta scritto", ((await sett()).giroAMano||[]).indexOf(await id("Gianni"))>=0, JSON.stringify((await sett()).giroAMano));
   await daCapo();
-  r=await chi();
-  check("Gianni, con un segno a mano rimasto, resta a zero: tocca a lui", r.form==="Gianni"||r.cap==="Gianni", JSON.stringify(r));
+  check("la volta a mano conta: Gianni non è più l'unico a zero", !/Gianni è l'unico fra chi gioca ad averlo fatto mai/.test(await perche()), await perche());
+  // la tolgo
+  await tab("PARTITE");
+  await p.locator("main button",{hasText:/Correggi formatori e capitani · Sistema|Ricostruisci dallo storico/}).click(); await w(600);
+  await p.evaluate(()=>{const b=[...document.querySelectorAll("main button")].find(x=>/Gianni/.test(x.innerText)&&/🎖️/.test(x.innerText));b&&b.click();}); await w(900);
+  check("ritoccata, la volta a mano si toglie", /🎖️ mai/.test(await riga("Gianni"))&&((await sett()).giroAMano||[]).length===0, await riga("Gianni"));
+
+  console.log("\n— CORREGGERE UNA PARTITA GIÀ SEGNATA —");
+  const ultima=(await db()).groups[0].data.matches.slice().sort((a,b)=>new Date(b.date)-new Date(a.date))[0];
+  const sc=p.locator(`main select[aria-label='Capitano del ${ultima.date}']`);
+  check("le partite già segnate si possono correggere", await sc.count()===1, ultima.date);
+  await sc.selectOption({label:"Luca"}); await w(300);
+  await p.locator("main button",{hasText:"Salva 1 partita"}).click(); await w(1200);
+  const dopo=(await db()).groups[0].data.matches.find(m=>m.id===ultima.id);
+  check("il capitano corretto è salvato", dopo.capitano===await id("Luca"), JSON.stringify({c:dopo.capitano}));
+
+  console.log("\n— AZZERA, CON CONFERMA —");
+  await p.locator("main button",{hasText:"Azzera il conto del giro"}).click(); await w(300);
+  check("prima chiede se sei sicuro", /Sicuro\?/.test(await T()), "");
+  await p.locator("main button",{hasText:"Sì, azzera"}).click(); await w(900);
+  check("azzerato: si conta da adesso", !!(await sett()).giroInizio, JSON.stringify(await sett()));
+  check("e tutti tornano a 'mai'", /🎖️ mai/.test(await riga("Fo"))&&/🎖️ mai/.test(await riga("Perro")), await riga("Fo"));
+  await tab("CLASSIFICA");
+  check("il 🎖️ in classifica resta quello di sempre", await capiDi("Fo")>=1, await capiDi("Fo"));
 
   console.log("\n— ERRORI JS —");
   check("nessun errore in pagina", errs.length===0, errs.slice(0,2).join(" || "));
