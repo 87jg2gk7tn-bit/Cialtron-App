@@ -56,7 +56,7 @@ const C={accent:"#B8FF00",bg:"#090909",card:"#111",card2:"#1A1A1A",card3:"#222",
 /* Versione pubblicata: confrontata con version.json per avvisare che c'è
    un aggiornamento. Sul telefono la pagina resta in cache, senza questo
    controllo le modifiche non arriverebbero finché non si svuota la cache. */
-const APP_VERSION="2026-11-17.1";
+const APP_VERSION="2026-11-17.2";
 
 function useUpdateCheck(){
   const [next,setNext]=useState(null);
@@ -1627,7 +1627,153 @@ function StepBar({phase}){
   );
 }
 
-function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed,golVivo,squadreFatte,togliGolVivo,azzeraGolVivo}){
+/* ═══════════════════════════════════════════════════════
+   CAPITANI DELLE PARTITE VECCHIE
+   Fino a novembre la partita non si segnava chi era capitano e chi
+   formatore. Restano due tracce, e da quelle si propone:
+   · le squadre: quando le fa l'app, il primo dei bianchi e il primo dei
+     neri sono proprio loro due (cava: chi ha scelto il lato e l'altro;
+     tradizionale: formatore e capitano);
+   · la lista del giro (settings.giroFatti): l'app ci aggiungeva la coppia
+     nell'ordine capitano, formatore — da lì si capisce chi era chi.
+   È una proposta: chi c'era la conferma o la corregge.
+═══════════════════════════════════════════════════════ */
+function proponiRuoli(m,tracce,ordine,ospite){
+  const a=(m.white||[])[0], b=(m.black||[])[0];
+  if(!a||!b||ospite(a)||ospite(b))return{fonte:"nessuna"};
+  const ia=tracce.indexOf(a), ib=tracce.indexOf(b);
+  if(ia<0||ib<0)return{fonte:"nessuna"};
+  if(ib===ia+1)return{capitano:a,formatore:b,fonte:"sicura"};
+  if(ia===ib+1)return{capitano:b,formatore:a,fonte:"sicura"};
+  /* Tutti e due nella lista ma non uno dopo l'altro: la lista non conferma
+     la coppia. Una partita fatta a mano dà proprio questo (i primi in
+     squadra sono a caso), quindi non si propone niente: solo un indizio. */
+  return{fonte:"indizio",primi:[a,b]};
+}
+
+function RuoliStorico({matches,players,tracce,ordine,saveMatches,setSettings,say}){
+  const [apri,setApri]=useState(false), [busy,setBusy]=useState(false), [forza,setForza]=useState(false);
+  const ospite=id=>isExt(id)||!!((players.find(p=>p.id===id)||{}).visitor);
+  const nome=id=>(players.find(p=>p.id===id)||{}).name||"?";
+  const vecchie=(matches||[]).filter(m=>!m.capitano||!m.formatore)
+                 .slice().sort((a,b)=>quandoMs(a.date)-quandoMs(b.date));
+  const [scelte,setScelte]=useState(null);   // id partita → {formatore,capitano,fonte}
+  const proposte=useMemo(()=>{
+    const o={};
+    vecchie.forEach(m=>{
+      const pr=proponiRuoli(m,tracce||[],ordine||[],ospite);
+      o[m.id]={formatore:m.formatore||pr.formatore||"",capitano:m.capitano||pr.capitano||"",fonte:pr.fonte,primi:pr.primi};
+    });
+    return o;
+  },[vecchie.map(m=>m.id).join(","),(tracce||[]).join(","),(ordine||[]).join(",")]);
+  const val=scelte||proposte;
+
+  /* Segnati "già fatto" a mano ma capitano o formatore in nessuna partita
+     SALVATA: quasi sempre una prova. Si fanno vedere solo a partite
+     sistemate: prima, chi ha fatto il capitano in una partita non ancora
+     sistemata comparirebbe qui, e toglierlo sarebbe un errore. */
+  const conRuolo=new Set();
+  (matches||[]).forEach(m=>{[m.capitano,m.formatore].forEach(x=>x&&conRuolo.add(x));});
+  const orfani=(tracce||[]).filter(id=>!conRuolo.has(id)&&players.some(p=>p.id===id));
+  const vediOrfani=orfani.length>0&&!scelte&&(vecchie.length===0||forza);
+  /* sparisce solo quando non resta niente da fare: né partite da sistemare
+     né segni da ripulire (se no, salvato, si perdeva il secondo passo) */
+  if(!vecchie.length&&!orfani.length)return null;
+
+  const imposta=(mid,campo,v)=>{
+    const cur=Object.assign({},val[mid]); cur[campo]=v;
+    if(v&&campo==="capitano"&&cur.formatore===v)cur.formatore="";
+    if(v&&campo==="formatore"&&cur.capitano===v)cur.capitano="";
+    setScelte(Object.assign({},val,{[mid]:cur}));
+  };
+  const salva=async()=>{
+    setBusy(true);
+    const next=(matches||[]).map(m=>{
+      const v=val[m.id]; if(!v)return m;
+      const dentro=id=>id&&((m.white||[]).indexOf(id)>=0||(m.black||[]).indexOf(id)>=0)&&!ospite(id)?id:null;
+      const f=dentro(v.formatore), c=dentro(v.capitano);
+      if(!f&&!c)return m;
+      return Object.assign({},m,{formatore:f||m.formatore||null,capitano:c||m.capitano||null});
+    });
+    /* il passato non chiude giri: lo fanno solo le partite nuove. Se no un
+       segno rimasto da una prova completerebbe l'elenco e il giro si
+       chiuderebbe proprio mentre lo stai ripulendo */
+    await saveMatches(next,{senzaGiro:true});
+    setBusy(false);setScelte(null);
+    say&&say("Capitani e formatori salvati nelle partite");
+  };
+  const fonti={sicura:["probabile: squadre fatte con l'app, e la lista del giro lo conferma",C.green],
+               indizio:["la lista del giro non lo conferma: sceglili tu",C.accent],
+               nessuna:["nessuna traccia: sceglili tu",C.muted]};
+
+  return(
+    <div style={{background:C.card,border:`1px solid ${C.accent}45`,borderRadius:14,padding:16,marginBottom:16}}>
+      <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,letterSpacing:2,color:C.accent}}>🎖️ CAPITANI DELLE PARTITE VECCHIE</div>
+      <div style={{fontSize:12,color:C.muted,lineHeight:1.6,margin:"6px 0 12px"}}>
+        {vecchie.length?<><strong style={{color:C.text}}>{vecchie.length} {vecchie.length===1?"partita":"partite"}</strong> senza capitano e formatore: prima l'app non se li segnava.
+          Li ho ricostruiti dallo storico — controlla, correggi se serve, e salva.</>
+          :<>Tutte le partite hanno capitano e formatore.</>}
+      </div>
+      {!apri?(
+        <Btn onClick={()=>setApri(true)} full>{vecchie.length?"Ricostruisci dallo storico":"Rivedi"}</Btn>
+      ):(
+        <>
+          {vecchie.map(m=>{
+            const v=val[m.id]||{}, f=fonti[v.fonte]||fonti.nessuna;
+            const inCampo=(m.white||[]).concat(m.black||[]).filter(id=>!ospite(id));
+            return(
+              <div key={m.id} style={{background:C.card2,border:`1px solid ${C.border}`,borderRadius:10,padding:12,marginBottom:8}}>
+                <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:4}}>
+                  <span style={{fontSize:13,fontWeight:800,color:C.text}}>{new Date(m.date).toLocaleDateString("it-IT",{day:"numeric",month:"long"})}</span>
+                  <span style={{fontSize:12,color:C.muted}}>⬜ {m.scoreWhite} – {m.scoreBlack} ⬛</span>
+                </div>
+                <div style={{fontSize:10,color:f[1],marginBottom:8,lineHeight:1.5}}>
+                  {f[0]}{v.fonte==="indizio"&&v.primi&&<> · primi in squadra: {nome(v.primi[0])} e {nome(v.primi[1])}, se le squadre le ha fatte l'app erano loro</>}
+                </div>
+                {[["formatore","Formatore"],["capitano","Capitano"]].map(([k,lab])=>(
+                  <div key={k} style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                    <span style={{fontSize:11,color:C.muted,width:72,flexShrink:0}}>{lab}</span>
+                    <select value={v[k]||""} onChange={e=>imposta(m.id,k,e.target.value)} aria-label={lab+" del "+m.date}
+                      style={{flex:1,background:C.card,border:`1px solid ${C.border}`,color:C.text,borderRadius:8,padding:"7px 10px",fontSize:13,fontFamily:"'DM Sans',sans-serif"}}>
+                      <option value="">— non so —</option>
+                      {inCampo.map(id=><option key={id} value={id}>{nome(id)}</option>)}
+                    </select>
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+          {vecchie.length>0&&<Btn onClick={salva} disabled={busy} full style={{marginTop:4}}>{busy?"Salvo…":"Salva capitani e formatori"}</Btn>}
+          {orfani.length>0&&!vediOrfani&&vecchie.length>0&&!scelte&&(
+            <button onClick={()=>setForza(true)}
+              style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:11,fontFamily:"'DM Sans',sans-serif",
+                      padding:"12px 0 0",textDecoration:"underline",display:"block",margin:"0 auto",textAlign:"center"}}>
+              Non ricordo le altre partite: fammi vedere chi è segnato "già fatto" senza una partita
+            </button>
+          )}
+          {vediOrfani&&(
+            <div style={{borderTop:`1px solid ${C.border}`,marginTop:14,paddingTop:12}}>
+              <div style={{fontSize:12,color:C.text,fontWeight:700,marginBottom:4}}>Segnati "già fatto" senza una partita</div>
+              {vecchie.length>0&&<div style={{fontSize:11,color:C.red,lineHeight:1.5,marginBottom:6}}>
+                Attenzione: {vecchie.length} {vecchie.length===1?"partita è":"partite sono"} ancora senza capitano e formatore. Se qualcuno qui sotto l'ha fatto lì, non toglierlo.
+              </div>}
+              <div style={{fontSize:11,color:C.muted,lineHeight:1.6,marginBottom:8}}>
+                <strong style={{color:C.text}}>{orfani.map(nome).join(", ")}</strong>: per il giro risultano già fatti, ma in nessuna partita sono stati capitano o formatore.
+                Quasi sempre vengono da una selezione di prova o rifatta. Togliendoli, tornano a essere proposti.
+              </div>
+              <Btn onClick={async()=>{await setSettings({giroFatti:(tracce||[]).filter(id=>orfani.indexOf(id)<0)});say&&say("Tolti dal giro");}}
+                   variant="ghost" full small>Toglili dal giro</Btn>
+            </div>
+          )}
+          <Btn onClick={()=>{setApri(false);setScelte(null);}} variant="ghost" full small style={{marginTop:8}}>Chiudi</Btn>
+        </>
+      )}
+    </div>
+  );
+}
+
+function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed,golVivo,squadreFatte,togliGolVivo,azzeraGolVivo,
+                       tracce,ordine,setSettings,say}){
   const [extra,setExtra]=useState([]);   // esterni aggiunti al volo per questa partita
   const [extInfo,setExtInfo]=useState({});   // il loro nome e le loro stelle
   const [phase,setPhase]=useState("list"), [white,setWhite]=useState([]), [black,setBlack]=useState([]);
@@ -1748,6 +1894,8 @@ function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed
 
       {phase==="list"&&(
         <>
+          <RuoliStorico matches={matches} players={players} tracce={tracce} ordine={ordine}
+                        saveMatches={saveMatches} setSettings={setSettings} say={say}/>
           {vivi.length>0&&(
             <div style={{background:C.card,border:`1px solid ${C.accent}45`,borderRadius:14,padding:16,marginBottom:16}}>
               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
@@ -3523,9 +3671,9 @@ function CialtronApp(){
      quelli in classifica il giro è finito: se ne apre uno nuovo che parte
      dopo quella partita. Il valore è lo stesso per chiunque lo calcoli, quindi
      due telefoni che lo scrivono insieme non fanno danni. */
-  const saveMatches=useCallback(async next=>{
+  const saveMatches=useCallback(async(next,opz)=>{
     const ok=await writeData({matches:next});
-    if(ok===false)return ok;
+    if(ok===false||(opz&&opz.senzaGiro))return ok;
     const g=giroDi(classifica,next,board.settings);
     if(g.totale>=2&&g.mancano.length===0&&g.ultima)
       await setSettings({giroInizio:g.ultima,giroNumero:g.numero+1,giroFatti:[]});
@@ -3857,7 +4005,9 @@ function CialtronApp(){
                               golVivo={golVivo} togliGolVivo={togliGolVivo} azzeraGolVivo={azzeraGolVivo}
                               squadreFatte={teamSel&&teamSel.phase==="done"?{white:teamSel.finalWhite||[],black:teamSel.finalBlack||[],extInfo:teamSel.extInfo||{},
                                                              capitano:teamSel.capId||"",formatore:teamSel.pickId||""}:null}
-                              prefill={prefill} onPrefillUsed={prefillUsato}/>}
+                              prefill={prefill} onPrefillUsed={prefillUsato}
+                              tracce={Array.isArray(board.settings.giroFatti)?board.settings.giroFatti:[]}
+                              ordine={classifica.map(p=>p.id)} setSettings={setSettings} say={say}/>}
         {tab==="teams"    &&<TeamsSection standings={standings} classifica={classifica} teamSel={teamSel} setSel={setSel} myPlayerId={myPlayerId} isAdmin={isAdmin}
                               capId={capId} pickId={pickId} capManual={capManual} pickManual={pickManual} setSettings={setSettings}
                               availableIds={availableIds} eligible={eligible} playAll={!!board.settings.playAll}

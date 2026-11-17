@@ -40,4 +40,6 @@ parte più.
 - `test-esterni-chiamata.js` — eliminare un esterno a chiamata in corso.
 - `test-giro-capitani.js` — capitano e formatore salvati con la partita, il
   conto 🎖️ in classifica, il giro con numero e data d'inizio.
+- `test-storico-capitani.js` — ricostruire i ruoli delle partite vecchie e
+  ripulire i segni lasciati dalle prove.
 - `shot-voto.js`, `shot-visitatore.js`, `shot-esterni.js` — fanno la foto della pagina, per guardarla davvero.
