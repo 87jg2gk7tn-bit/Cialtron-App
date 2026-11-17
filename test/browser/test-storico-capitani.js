@@ -111,7 +111,7 @@ const check=(n,v,x="")=>{(v?ok:ko).push(n);console.log((v?"  ✓ ":"  ✗ ")+n+(
   await tab("SQUADRE");
   t=await T();
   const g=t.slice(t.indexOf("GIRO DEI CAPITANI"),t.indexOf("GIRO DEI CAPITANI")+400);
-  check("il giro: fatto da 6 su 7, manca Ale", /Fatto da\s*6 su 7/.test(g)&&/Mancano:\s*Ale/.test(g), g);
+  check("il giro: fatto da 6 su 7, tocca ad Ale", /giro fatto da\s*6 su 7/.test(g)&&/Tocca a:\s*Ale/.test(g), g);
   check("e Ale ha un ruolo alla prossima", /(CAPITANO|FORMATORE)[\s\S]{0,40}Ale/.test(t), t.slice(t.indexOf("🏆"),t.indexOf("🏆")+160));
 
   console.log("\n— ERRORI JS —");

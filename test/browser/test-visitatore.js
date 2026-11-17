@@ -67,9 +67,9 @@ const check=(n,v,x="")=>{(v?ok:ko).push(n);console.log((v?"  ✓ ":"  ✗ ")+n+(
   await tab("SQUADRE"); t=await T();
   check("il formatore è il primo della classifica, non il visitatore", /FORMATORE[\s\S]{0,40}Perro/.test(t), await ruoli());
   check("il capitano è l'ultimo", /CAPITANO[\s\S]{0,40}Fo/.test(t), await ruoli());
-  check("il giro conta solo chi lo fa: 0 su 5, il visitatore escluso", /Fatto da\s*0 su 5/.test(t), t.slice(t.indexOf("GIRO"),t.indexOf("GIRO")+200));
+  check("il giro conta solo chi lo fa: 0 su 5, il visitatore escluso", /giro fatto da\s*0 su 5/.test(t), t.slice(t.indexOf("GIRO"),t.indexOf("GIRO")+200));
   await p.locator("main button",{hasText:"Sistema"}).first().click(); await w(400);
-  const righeGiro=await p.locator("main button").filter({hasText:/già fatto|—/}).allInnerTexts();
+  const righeGiro=await p.locator("main button").filter({hasText:/🎖️ \d/}).allInnerTexts();
   check("nel pannello del giro Gianni non c'è", righeGiro.length===5&&!righeGiro.some(x=>/Gianni/.test(x)), JSON.stringify(righeGiro));
   await p.locator("main button",{hasText:"Chiudi"}).first().click(); await w(400);
   await p.locator("main button",{hasText:/capitano e formatore (a mano|scelti a mano)/i}).first().click(); await w(400);
