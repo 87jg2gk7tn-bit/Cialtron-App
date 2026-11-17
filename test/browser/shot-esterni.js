@@ -1,6 +1,6 @@
 const {chromium}=require('playwright');
 (async()=>{
-  const b=await chromium.launch({executablePath:'/opt/pw-browsers/chromium-1194/chrome-linux/chrome',proxy:{server:'http://127.0.0.1:1',bypass:'localhost,127.0.0.1'}});
+  const b=await chromium.launch({executablePath:require('./chrome')(),proxy:{server:'http://127.0.0.1:1',bypass:'localhost,127.0.0.1'}});
   const ctx=await b.newContext({viewport:{width:390,height:900},deviceScaleFactor:2});
   await ctx.addInitScript({path:__dirname+"/fakesupa.js"});
   const p=await ctx.newPage(); const w=(ms=500)=>p.waitForTimeout(ms);

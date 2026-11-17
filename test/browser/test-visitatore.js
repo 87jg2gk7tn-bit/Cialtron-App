@@ -5,7 +5,7 @@ let ok=[],ko=[];
 const check=(n,v,x="")=>{(v?ok:ko).push(n);console.log((v?"  ✓ ":"  ✗ ")+n+(v?"":"  →  "+String(x).replace(/\n/g," | ").slice(0,240)));};
 
 (async()=>{
-  const b=await chromium.launch({executablePath:process.env.CHROME||'/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
+  const b=await chromium.launch({executablePath:require('./chrome')(),
                                  proxy:{server:'http://127.0.0.1:1',bypass:'localhost,127.0.0.1'}});
   const ctx=await b.newContext({viewport:{width:390,height:900}});
   await ctx.addInitScript({path:__dirname+"/fakesupa.js"});
@@ -67,7 +67,7 @@ const check=(n,v,x="")=>{(v?ok:ko).push(n);console.log((v?"  ✓ ":"  ✗ ")+n+(
   await tab("SQUADRE"); t=await T();
   check("il formatore è il primo della classifica, non il visitatore", /FORMATORE[\s\S]{0,40}Perro/.test(t), await ruoli());
   check("il capitano è l'ultimo", /CAPITANO[\s\S]{0,40}Fo/.test(t), await ruoli());
-  check("il giro conta solo chi lo fa (0 su 5... nessuno ancora)", /Non l'ha ancora fatto nessuno/.test(t), t.slice(t.indexOf("GIRO"),t.indexOf("GIRO")+200));
+  check("il giro conta solo chi lo fa: 0 su 5, il visitatore escluso", /Fatto da\s*0 su 5/.test(t), t.slice(t.indexOf("GIRO"),t.indexOf("GIRO")+200));
   await p.locator("main button",{hasText:"Sistema"}).first().click(); await w(400);
   const righeGiro=await p.locator("main button").filter({hasText:/già fatto|—/}).allInnerTexts();
   check("nel pannello del giro Gianni non c'è", righeGiro.length===5&&!righeGiro.some(x=>/Gianni/.test(x)), JSON.stringify(righeGiro));
@@ -96,8 +96,9 @@ const check=(n,v,x="")=>{(v?ok:ko).push(n);console.log((v?"  ✓ ":"  ✗ ")+n+(
   const inSquadra=(st.finalWhite||[]).concat(st.finalBlack||[]);
   const gid=(await giocatore("Gianni")).id;
   check("le squadre sono fatte e Gianni è dentro", inSquadra.indexOf(gid)>=0, JSON.stringify(st.phase)+" "+inSquadra.length);
-  const fatti=(await db()).board[0].settings.giroFatti||[];
-  check("il giro segna capitano e formatore, non lui", fatti.length===2&&fatti.indexOf(gid)<0, JSON.stringify(fatti));
+  /* il giro non si segna più a fine selezione: lo dice la partita registrata */
+  const fatti=(((await db()).board[0].settings)||{}).giroFatti||[];
+  check("il visitatore non finisce nel giro", fatti.indexOf(gid)<0, JSON.stringify(fatti));
 
   console.log("\n— DOPO UNA PARTITA RESTA FUORI DALLA CLASSIFICA —");
   await p.evaluate(gid=>{

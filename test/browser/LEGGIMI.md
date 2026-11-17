@@ -6,13 +6,19 @@ memoria. Nessun database vero viene toccato.
 
 ## Come si lancia
 
-    npm i playwright                     # una volta sola
-    sh test/browser/mk-test.sh           # rigenera test.html da index.html
-    cd test/browser && python3 -m http.server 8902 --bind 127.0.0.1 &
-    node test-voto-altri.js
+    cd test/browser
+    npm i                                # una volta per container: Babel 7.24.7 e Playwright
+    node check-sintassi.js               # il JSX compila? (stesso Babel della CDN)
+    sh ../../test/browser/mk-test.sh     # dalla radice del repo: rigenera test.html
+    python3 -m http.server 8902 --bind 127.0.0.1 &
+    node test-giro-capitani.js           # e le altre test-*.js
 
-`mk-test.sh` va rilanciato **a ogni modifica di index.html**: se te lo
-dimentichi stai provando la versione di prima e non te ne accorgi.
+`mk-test.sh` si lancia dalla radice del repo e va rilanciato **a ogni
+modifica di index.html**: se te lo dimentichi stai provando la versione di
+prima e non te ne accorgi.
+
+Chromium lo trova `chrome.js` fra quelli preinstallati (la versione cambia
+da un container all'altro); per usarne un altro: `CHROME=/percorso node …`.
 
 ## Perché le librerie stanno qui dentro
 
@@ -32,4 +38,6 @@ parte più.
 - `test-visitatore.js` — il visitatore gioca ma resta fuori da classifica e giro.
 - `test-esterni.js` — esterni con nome e stelle; esterni e visitatori fuori dall'MVP.
 - `test-esterni-chiamata.js` — eliminare un esterno a chiamata in corso.
+- `test-giro-capitani.js` — capitano e formatore salvati con la partita, il
+  conto 🎖️ in classifica, il giro con numero e data d'inizio.
 - `shot-voto.js`, `shot-visitatore.js`, `shot-esterni.js` — fanno la foto della pagina, per guardarla davvero.

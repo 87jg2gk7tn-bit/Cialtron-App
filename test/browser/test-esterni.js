@@ -5,7 +5,7 @@ let ok=[],ko=[];
 const check=(n,v,x="")=>{(v?ok:ko).push(n);console.log((v?"  ✓ ":"  ✗ ")+n+(v?"":"  →  "+String(x).replace(/\n/g," | ").slice(0,260)));};
 
 (async()=>{
-  const b=await chromium.launch({executablePath:process.env.CHROME||'/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
+  const b=await chromium.launch({executablePath:require('./chrome')(),
                                  proxy:{server:'http://127.0.0.1:1',bypass:'localhost,127.0.0.1'}});
   const ctx=await b.newContext({viewport:{width:390,height:900}});
   await ctx.addInitScript({path:__dirname+"/fakesupa.js"});

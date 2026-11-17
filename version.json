@@ -1,4 +1,4 @@
 {
-  "version": "2026-11-12.3",
-  "note": "L'esterno si elimina anche a chiamata in corso"
+  "version": "2026-11-17.1",
+  "note": "Quante volte capitano in classifica; il giro si legge dalle partite giocate"
 }
