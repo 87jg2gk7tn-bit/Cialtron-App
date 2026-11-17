@@ -56,7 +56,7 @@ const C={accent:"#B8FF00",bg:"#090909",card:"#111",card2:"#1A1A1A",card3:"#222",
 /* Versione pubblicata: confrontata con version.json per avvisare che c'è
    un aggiornamento. Sul telefono la pagina resta in cache, senza questo
    controllo le modifiche non arriverebbero finché non si svuota la cache. */
-const APP_VERSION="2026-11-17.3";
+const APP_VERSION="2026-11-17.4";
 
 function useUpdateCheck(){
   const [next,setNext]=useState(null);
@@ -1634,7 +1634,7 @@ function StepBar({phase}){
    · le squadre: quando le fa l'app, il primo dei bianchi e il primo dei
      neri sono proprio loro due (cava: chi ha scelto il lato e l'altro;
      tradizionale: formatore e capitano);
-   · la lista del giro (settings.giroFatti): l'app ci aggiungeva la coppia
+   · la vecchia lista del giro (settings.giroFatti): l'app ci aggiungeva la coppia
      nell'ordine capitano, formatore — da lì si capisce chi era chi.
    È una proposta: chi c'era la conferma o la corregge.
 ═══════════════════════════════════════════════════════ */
@@ -1652,7 +1652,7 @@ function proponiRuoli(m,tracce,ordine,ospite){
 }
 
 function RuoliStorico({matches,players,tracce,ordine,saveMatches,setSettings,say}){
-  const [apri,setApri]=useState(false), [busy,setBusy]=useState(false), [forza,setForza]=useState(false);
+  const [apri,setApri]=useState(false), [busy,setBusy]=useState(false);
   const ospite=id=>isExt(id)||!!((players.find(p=>p.id===id)||{}).visitor);
   const nome=id=>(players.find(p=>p.id===id)||{}).name||"?";
   const vecchie=(matches||[]).filter(m=>!m.capitano||!m.formatore)
@@ -1668,17 +1668,7 @@ function RuoliStorico({matches,players,tracce,ordine,saveMatches,setSettings,say
   },[vecchie.map(m=>m.id).join(","),(tracce||[]).join(","),(ordine||[]).join(",")]);
   const val=scelte||proposte;
 
-  /* Segnati "già fatto" a mano ma capitano o formatore in nessuna partita
-     SALVATA: quasi sempre una prova. Si fanno vedere solo a partite
-     sistemate: prima, chi ha fatto il capitano in una partita non ancora
-     sistemata comparirebbe qui, e toglierlo sarebbe un errore. */
-  const conRuolo=new Set();
-  (matches||[]).forEach(m=>{[m.capitano,m.formatore].forEach(x=>x&&conRuolo.add(x));});
-  const orfani=(tracce||[]).filter(id=>!conRuolo.has(id)&&players.some(p=>p.id===id));
-  const vediOrfani=orfani.length>0&&!scelte&&(vecchie.length===0||forza);
-  /* sparisce solo quando non resta niente da fare: né partite da sistemare
-     né segni da ripulire (se no, salvato, si perdeva il secondo passo) */
-  if(!vecchie.length&&!orfani.length)return null;
+  if(!vecchie.length)return null;
 
   const imposta=(mid,campo,v)=>{
     const cur=Object.assign({},val[mid]); cur[campo]=v;
@@ -1744,27 +1734,6 @@ function RuoliStorico({matches,players,tracce,ordine,saveMatches,setSettings,say
             );
           })}
           {vecchie.length>0&&<Btn onClick={salva} disabled={busy} full style={{marginTop:4}}>{busy?"Salvo…":"Salva capitani e formatori"}</Btn>}
-          {orfani.length>0&&!vediOrfani&&vecchie.length>0&&!scelte&&(
-            <button onClick={()=>setForza(true)}
-              style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:11,fontFamily:"'DM Sans',sans-serif",
-                      padding:"12px 0 0",textDecoration:"underline",display:"block",margin:"0 auto",textAlign:"center"}}>
-              Non ricordo le altre partite: fammi vedere chi è segnato "già fatto" senza una partita
-            </button>
-          )}
-          {vediOrfani&&(
-            <div style={{borderTop:`1px solid ${C.border}`,marginTop:14,paddingTop:12}}>
-              <div style={{fontSize:12,color:C.text,fontWeight:700,marginBottom:4}}>Segnati "già fatto" senza una partita</div>
-              {vecchie.length>0&&<div style={{fontSize:11,color:C.red,lineHeight:1.5,marginBottom:6}}>
-                Attenzione: {vecchie.length} {vecchie.length===1?"partita è":"partite sono"} ancora senza capitano e formatore. Se qualcuno qui sotto l'ha fatto lì, non toglierlo.
-              </div>}
-              <div style={{fontSize:11,color:C.muted,lineHeight:1.6,marginBottom:8}}>
-                <strong style={{color:C.text}}>{orfani.map(nome).join(", ")}</strong>: per il giro risultano già fatti, ma in nessuna partita sono stati capitano o formatore.
-                Quasi sempre vengono da una selezione di prova o rifatta. Togliendoli, tornano a essere proposti.
-              </div>
-              <Btn onClick={async()=>{await setSettings({giroFatti:(tracce||[]).filter(id=>orfani.indexOf(id)<0)});say&&say("Tolti dal giro");}}
-                   variant="ghost" full small>Toglili dal giro</Btn>
-            </div>
-          )}
           <Btn onClick={()=>{setApri(false);setScelte(null);}} variant="ghost" full small style={{marginTop:8}}>Chiudi</Btn>
         </>
       )}
@@ -1834,6 +1803,16 @@ function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed
     const g={};Object.entries(m.goals||{}).forEach(([id,v])=>{g[id]=String(v);});
     setGoals(g);setModId(m.id);setConferma(false);setPhase("winner");
   };
+
+  /* Partita nuova registrata a mano mentre in Squadre c'è una selezione
+     finita: formatore e capitano sono quelli, se giocano in questa partita.
+     Senza, la partita si salverebbe senza ruoli e il giro non andrebbe avanti. */
+  useEffect(()=>{
+    if(phase!=="extra"||modId||capitano||formatore||!squadreFatte)return;
+    const dentro=white.concat(black);
+    if(squadreFatte.formatore&&dentro.indexOf(squadreFatte.formatore)>=0)setFormatore(squadreFatte.formatore);
+    if(squadreFatte.capitano&&dentro.indexOf(squadreFatte.capitano)>=0)setCapitano(squadreFatte.capitano);
+  },[phase]);
 
   /* Arrivando da "registra la partita con queste squadre" si salta l'assegnazione:
      è già stata fatta nella selezione, riscriverla a mano sarebbe un doppione. */
@@ -1996,6 +1975,10 @@ function MatchSection({players,matches,isAdmin,saveMatches,prefill,onPrefillUsed
                   :<>Nessun marcatore segnato.</>}
                 {mvp&&<div>MVP: {(getP(mvp)||{}).name}</div>}
                 {(formatore||capitano)&&<div>Formatore: {formatore?(getP(formatore)||{}).name:"—"} · Capitano: {capitano?(getP(capitano)||{}).name:"—"}</div>}
+                {(!formatore||!capitano)&&<div style={{color:C.red,marginTop:6}}>
+                  Manca {!formatore&&!capitano?"chi ha fatto formatore e capitano":!formatore?"il formatore":"il capitano"}: senza, il giro non va avanti
+                  e la prossima volta l'app riproporrà gli stessi. Torna indietro e segnali, se te li ricordi.
+                </div>}
               </div>
             </div>
             {!torna&&<div style={{fontSize:11,color:C.red,marginBottom:12,lineHeight:1.5}}>
@@ -2373,7 +2356,14 @@ function CallupSection({players,board,matchDate,setCallup,setSettings,myPlayerId
    IL GIRO DEI CAPITANI: TOCCA A CHI L'HA FATTO MENO VOLTE
    Per ognuno si contano le volte che ha fatto il formatore o il capitano
    nelle partite registrate (che se lo portano scritto), più quelle segnate
-   a mano per le partite che l'app non conosce (settings.giroFatti).
+   a mano per le partite che l'app non conosce (settings.giroAMano).
+
+   La vecchia lista "già fatto" (settings.giroFatti) NON conta: la
+   scrivevano anche le selezioni di prova, quindi dava una volta a gente che
+   il capitano non l'aveva mai fatto. Con quasi tutti a 1, chi arrivava a 1
+   con una partita vera pareggiava, e a parità vincevano di nuovo primo e
+   ultimo in classifica: la stessa coppia due volte di fila. Quella lista
+   serve solo come traccia per ricostruire le partite vecchie.
    Fra chi gioca, tocca a chi ne ha meno; fra questi decide la classifica:
    il primo fa le squadre, l'ultimo sceglie il lato.
 
@@ -2397,7 +2387,7 @@ function giroDi(classifica,matches,settings){
   partite.forEach(m=>[m.formatore,m.capitano].forEach(id=>{
     if(id&&volte[id]!==undefined){volte[id]++;quando[id].push(m.date);}
   }));
-  const manuali=(Array.isArray(s.giroFatti)?s.giroFatti:[]).filter(id=>ids.indexOf(id)>=0);
+  const manuali=(Array.isArray(s.giroAMano)?s.giroAMano:[]).filter(id=>ids.indexOf(id)>=0);
   manuali.forEach(id=>volte[id]++);
   return{inizio,partite:partite.length,volte,quando,manuali,totale:ids.length};
 }
@@ -2750,6 +2740,26 @@ function TeamsSection({standings,classifica,eligible,teamSel,setSel,myPlayerId,i
             ))}
           </div>
 
+          {/* Perché proprio loro: l'app lo dice, con i numeri. Se no sembra
+              che scelga a caso, e un errore nei conti non si vede. */}
+          {giro&&captain&&picker&&(()=>{
+            const nomeDi=id=>(standings.find(p=>p.id===id)||{}).name;
+            const L=giro.livello||0, turno=giro.turno||[];
+            const volteTxt=n=>n===0?"mai":n===1?"1 volta":n+" volte";
+            const v=id=>(giro.volte&&giro.volte[id])||0;
+            return(
+              <div style={{background:C.card2,border:`1px solid ${C.border}`,borderRadius:12,padding:"10px 12px",marginBottom:10,fontSize:11,color:C.muted,lineHeight:1.6}}>
+                <strong style={{color:C.text}}>Perché loro.</strong>{" "}
+                {capManual||pickManual
+                  ?<>Scelti a mano per questa partita.</>
+                  :turno.length>=2
+                    ?<>Fra chi gioca tocca a chi l'ha fatto meno volte ({volteTxt(L)}): {turno.length<=8?turno.map(nomeDi).join(", "):turno.length+" giocatori"}.
+                       Fra questi {picker.name} è il primo in classifica e {captain.name} l'ultimo.</>
+                    :<>{nomeDi(turno[0])} è l'unico fra chi gioca ad averlo fatto {volteTxt(L)}: un ruolo è suo.
+                       L'altro va a {nomeDi(turno[0])===picker.name?captain.name:picker.name}, fra chi viene subito dopo ({volteTxt(v(turno[0]===picker.id?captain.id:picker.id))}).</>}
+              </div>
+            );
+          })()}
           {(decaduti||[]).length>0&&(
             <div style={{background:C.red+"10",border:`1px solid ${C.red}30`,borderRadius:12,padding:"10px 12px",marginBottom:10,fontSize:11,color:C.text,lineHeight:1.5}}>
               {(decaduti||[]).map(d=>(
@@ -2790,7 +2800,9 @@ function TeamsSection({standings,classifica,eligible,teamSel,setSel,myPlayerId,i
                       <>
                         <div style={{fontSize:10,color:C.muted,letterSpacing:1,marginBottom:4}}>🔄 GIRO DEI CAPITANI · N° {L+1}</div>
                         <div style={{fontSize:11,color:C.muted,lineHeight:1.6}}>
-                          <div>Tocca a chi l'ha fatto meno volte: adesso a chi l'ha fatto <strong style={{color:C.text}}>{volteTxt(L)}</strong>. Fra questi decide la classifica.</div>
+                          <div>Tocca a chi l'ha fatto meno volte: adesso {L===0
+                            ?<>a chi <strong style={{color:C.text}}>non l'ha mai fatto</strong></>
+                            :<>a chi l'ha fatto <strong style={{color:C.text}}>{volteTxt(L)}</strong></>}. Fra questi decide la classifica.</div>
                           <div>
                             {inizio?<>Si conta dal <strong style={{color:C.text}}>{inizio}</strong></>:<>Si conta dalla prima partita</>}
                             {" · "}<strong style={{color:C.text}}>{g.partite}</strong> {g.partite===1?"partita":"partite"}
@@ -2799,6 +2811,10 @@ function TeamsSection({standings,classifica,eligible,teamSel,setSel,myPlayerId,i
                           </div>
                           {tocca.length>0&&<div>Tocca a: <span style={{color:C.text}}>{tocca.map(id=>nome(id)+(pres.indexOf(id)<0?" (non gioca)":"")).filter(Boolean).join(", ")}</span></div>}
                           {indietro.length>0&&<div style={{color:C.accent}}>Indietro: {indietro.map(id=>nome(id)+" ("+volteTxt(v(id))+")").join(", ")}. Quando torna tocca a lui per primo.</div>}
+                          {g.senzaRuoli>0&&<div style={{color:C.red,marginTop:4}}>
+                            ⚠️ {g.senzaRuoli} {g.senzaRuoli===1?"partita non ha":"partite non hanno"} formatore e capitano: finché non le sistemi il conto non è giusto
+                            e possono tornare fuori sempre gli stessi. Partite → Ricostruisci dallo storico.
+                          </div>}
                         </div>
                       </>
                     );
@@ -2820,7 +2836,7 @@ function TeamsSection({standings,classifica,eligible,teamSel,setSel,myPlayerId,i
                     return(
                       <button key={p.id} onClick={()=>{
                           const cur=g.manuali||[];
-                          const patch={giroFatti:aMano?cur.filter(x=>x!==p.id):cur.concat(p.id)};
+                          const patch={giroAMano:aMano?cur.filter(x=>x!==p.id):cur.concat(p.id)};
                           /* una volta in più si porta via anche la sua nomina a mano */
                           if(!aMano){
                             if(g.manCap===p.id)patch.captainId=null;
@@ -2839,7 +2855,7 @@ function TeamsSection({standings,classifica,eligible,teamSel,setSel,myPlayerId,i
                     );
                   })}
                   <div style={{fontSize:11,color:C.muted,margin:"6px 0",lineHeight:1.5}}>Tocca la riga per aggiungere o togliere la volta segnata a mano.</div>
-                  <Btn onClick={()=>setSettings({giroFatti:[],giroInizio:new Date().toISOString()})}
+                  <Btn onClick={()=>setSettings({giroAMano:[],giroInizio:new Date().toISOString()})}
                        variant="ghost" full small style={{marginTop:6}}>↺ Azzera: da adesso si riparte tutti da zero</Btn>
                 </div>
               )}
@@ -4014,6 +4030,7 @@ function CialtronApp(){
                               decaduti={ruoliDecaduti}
                               giro={Object.assign({},giroStato,{manCap:ruoliVivi.manCapId,manPick:ruoliVivi.manPickId,
                                      livello:ruoliVivi.livello,turno:ruoliVivi.turno,
+                                     senzaRuoli:matches.filter(m=>!m.capitano||!m.formatore).length,
                                      presenti:eligible.filter(p=>!p.visitor).map(p=>p.id)})}
                               matchIso={matchIso} matchLabel={dataLunga(matchDate)}
                               onUseTeams={usaSquadre}

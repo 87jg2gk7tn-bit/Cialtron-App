@@ -102,7 +102,7 @@ const check=(n,v,x="")=>{(v?ok:ko).push(n);console.log((v?"  ✓ ":"  ✗ ")+n+(
   let r=await chi();
   check("formatore il primo (Perro), capitano l'ultimo (Fo)", r.form==="Perro"&&r.cap==="Fo", JSON.stringify(r));
   let g=await giroCard();
-  check("giro N° 1, tocca a chi non l'ha mai fatto", /N° 1/.test(g)&&/l'ha fatto mai/.test(g), g);
+  check("giro N° 1, tocca a chi non l'ha mai fatto", /N° 1/.test(g)&&/non l'ha mai fatto/.test(g), g);
   check("giro fatto da 0 su 6, circa 3 partite", /giro fatto da\s*0 su 6/.test(g)&&/circa\s*3\s*partite/.test(g), g);
 
   console.log("\n— UNA SELEZIONE NON CONTA, LA PARTITA SÌ —");

@@ -82,7 +82,6 @@ const check=(n,v,x="")=>{(v?ok:ko).push(n);console.log((v?"  ✓ ":"  ✗ ")+n+(
   await sel("Formatore","2026-10-01T20:00:00Z").selectOption({label:"Fo"}); await w(200);
   await sel("Capitano","2026-10-01T20:00:00Z").selectOption({label:"Bisseck"}); await w(300);
   t=await T();
-  check("prima di salvare la ripulitura non si vede: Fo e Bisseck non vanno toccati", !/Segnati "già fatto" senza una partita/.test(t)&&!/Toglili dal giro/.test(t), t.slice(t.indexOf("Salva capitani"),t.indexOf("Salva capitani")+300));
   await p.locator("main button",{hasText:"Salva capitani e formatori"}).click(); await w(1300);
   const ms=(await db()).groups[0].data.matches;
   const r=id=>{const m=ms.find(x=>x.id===id);return [m.formatore,m.capitano].map(x=>Object.keys(I).find(n=>I[n]===x)).join("/");};
@@ -92,17 +91,11 @@ const check=(n,v,x="")=>{(v?ok:ko).push(n);console.log((v?"  ✓ ":"  ✗ ")+n+(
   const st=(await db()).board[0].settings;
   check("salvare il passato non chiude il giro", !st.giroNumero&&(st.giroFatti||[]).length===7, JSON.stringify(st));
   t=await T();
-  check("la scheda resta per ripulire i segni", /Segnati "già fatto" senza una partita/.test(t), t.slice(0,600));
-  check("e fra i segnati senza partita c'è solo Ale (la prova)", /\nAle: per il giro/.test("\n"+t.slice(t.indexOf("senza una partita")+18)), t.slice(t.indexOf("Segnati"),t.indexOf("Segnati")+250));
-  check("e non dice più che ci sono partite da sistemare", /Tutte le partite hanno capitano e formatore/.test(t), t.slice(0,400));
+  /* i vecchi segni non contano più (li scrivevano anche le prove), quindi
+     non c'è niente da ripulire: sistemate le partite la scheda sparisce */
+  check("sistemate tutte, la scheda sparisce", !/CAPITANI DELLE PARTITE VECCHIE/.test(t), t.slice(0,400));
   check("le partite in storico mostrano i ruoli", /Formatore\s*Fo\s*·\s*Capitano\s*Bisseck/.test(t), "");
 
-  console.log("\n— RIPULIRE IL SEGNO DELLA PROVA —");
-  await p.locator("main button",{hasText:"Toglili dal giro"}).click(); await w(900);
-  const gf=((await db()).board[0].settings.giroFatti)||[];
-  check("Ale esce dal giro", gf.indexOf(I.Ale)<0, JSON.stringify(gf));
-  check("gli altri segni restano", gf.length===6, gf.length);
-  check("ora la scheda sparisce: non c'è più niente da fare", !/CAPITANI DELLE PARTITE VECCHIE/.test(await T()), "");
 
   console.log("\n— CLASSIFICA E GIRO —");
   await tab("CLASSIFICA");
@@ -111,7 +104,7 @@ const check=(n,v,x="")=>{(v?ok:ko).push(n);console.log((v?"  ✓ ":"  ✗ ")+n+(
   await tab("SQUADRE");
   t=await T();
   const g=t.slice(t.indexOf("GIRO DEI CAPITANI"),t.indexOf("GIRO DEI CAPITANI")+400);
-  check("il giro: fatto da 6 su 7, tocca ad Ale", /giro fatto da\s*6 su 7/.test(g)&&/Tocca a:\s*Ale/.test(g), g);
+  check("il giro: fatto da 6 su 7, tocca ad Ale (il suo vecchio segno da una prova non conta)", /giro fatto da\s*6 su 7/.test(g)&&/Tocca a:\s*Ale/.test(g), g);
   check("e Ale ha un ruolo alla prossima", /(CAPITANO|FORMATORE)[\s\S]{0,40}Ale/.test(t), t.slice(t.indexOf("🏆"),t.indexOf("🏆")+160));
 
   console.log("\n— ERRORI JS —");
